@@ -5,10 +5,12 @@
 
 import requests
 import re
+import os
+import json
+from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 from langchain_openai import ChatOpenAI
-import json
 
 
 class NewsScraperConfig:
@@ -52,8 +54,8 @@ class NewsScraper:
         self,
         config: NewsScraperConfig,
         firecrawl_url: str = "http://localhost:3002",
-        llm_url: str = "http://localhost:8000/v1",
-        model_name: str = "Qwen/Qwen3-4B-Instruct-2507",
+        llm_url: str = "https://router.huggingface.co/v1",
+        model_name: str = "Qwen/Qwen3-4B-Instruct-2507:nscale",
     ):
         """
         初始化爬蟲
@@ -64,11 +66,12 @@ class NewsScraper:
             llm_url: LLM API 的 URL
             model_name: 使用的模型名稱
         """
+        load_dotenv()
         self.config = config
         self.firecrawl_url = firecrawl_url
         self.llm = ChatOpenAI(
             base_url=llm_url,
-            api_key="EMPTY",
+            api_key=os.getenv("token"),
             model=model_name,
             temperature=0.7,
         )
