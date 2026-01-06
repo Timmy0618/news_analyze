@@ -25,6 +25,8 @@ class NewsScraperConfig:
         category_pattern: str,
         link_pattern: str,
         target_category: Optional[str] = None,
+        html_example: Optional[str] = None,
+        html_example_description: Optional[str] = None,
     ):
         """
         初始化爬蟲配置
@@ -37,6 +39,8 @@ class NewsScraperConfig:
             category_pattern: 類別的正則表達式
             link_pattern: 連結的正則表達式（需包含兩個群組：標題和連結）
             target_category: 目標類別（如 "政治"），None 表示不過濾
+            html_example: HTML 結構範例（用於 LLM 提示）
+            html_example_description: HTML 範例的說明（如何解讀各欄位）
         """
         self.base_url = base_url
         self.list_tags = list_tags
@@ -45,6 +49,8 @@ class NewsScraperConfig:
         self.category_pattern = category_pattern
         self.link_pattern = link_pattern
         self.target_category = target_category
+        self.html_example = html_example
+        self.html_example_description = html_example_description
 
 
 class NewsScraper:
@@ -54,8 +60,8 @@ class NewsScraper:
         self,
         config: NewsScraperConfig,
         firecrawl_url: str = "http://localhost:3002",
-        llm_url: str = "https://router.huggingface.co/v1",
-        model_name: str = "Qwen/Qwen3-4B-Instruct-2507:nscale",
+        llm_url: str = "http://localhost:8000/v1",
+        model_name: str = "Qwen/Qwen3-4B-Instruct-2507",
     ):
         """
         初始化爬蟲
@@ -71,9 +77,10 @@ class NewsScraper:
         self.firecrawl_url = firecrawl_url
         self.llm = ChatOpenAI(
             base_url=llm_url,
-            api_key=os.getenv("token"),
+            api_key=os.getenv("token", "EMPTY"),
             model=model_name,
             temperature=0.7,
+            max_tokens=512,  # 降低以符合 4B 模型的 context 限制
         )
     
     def scrape_page(self, url: str, tags: List[str]) -> str:
@@ -110,48 +117,229 @@ class NewsScraper:
             print(f"  抓取錯誤: {e}")
             return ""
     
+    def scrape_list_page(self, url: str) -> str:
+        """
+        直接用 requests 抓取列表頁面（不使用 Firecrawl）
+        
+        Args:
+            url: 要抓取的 URL
+            
+        Returns:
+            頁面的 HTML 內容
+        """
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+            }
+            
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            return response.text
+        except Exception as e:
+            print(f"  抓取錯誤: {e}")
+            return ""
+    
     def extract_news_links(
         self, 
         content: str, 
-        date_str: str
+        date_str: str,
+        save_dir: Optional[str] = None,
+        page_num: Optional[int] = None
     ) -> List[Tuple[str, str]]:
         """
-        從內容中提取新聞連結
+        使用 LLM 從 HTML 內容中提取新聞連結
         
         Args:
-            content: 頁面內容
+            content: 頁面 HTML 內容
             date_str: 目標日期字串（如 "2026/01/04"）
+            save_dir: 儲存 debug 資料的資料夾（可選）
+            page_num: 頁碼（可選，用於檔名）
             
         Returns:
             [(標題, 連結), ...] 的列表
         """
-        links = []
-        date_pattern = self.config.date_pattern.format(date=date_str)
-        date_positions = [(m.start(), m.group()) for m in re.finditer(date_pattern, content)]
+        # 直接抓取 <div class="container main-news-area viewallNewsList" id="contFix"> 這個 div 的內容
+        newslist_match = re.search(
+            r'<div\s+class="container main-news-area viewallNewsList"\s+id="contFix"[^>]*>(.*?)</div>\s*<!--\s*contFix',
+            content, 
+            re.DOTALL | re.IGNORECASE
+        )
         
-        for pos, date_text in date_positions:
-            before_context = content[max(0, pos-500):pos]
-            
-            # 檢查類別（如果有指定）
-            if self.config.target_category:
-                category_match = re.search(self.config.category_pattern, before_context)
-                if not category_match or category_match.group(1) != self.config.target_category:
-                    continue
-                
-                category_pos = before_context.rfind(f'[{self.config.target_category}]')
-                if category_pos == -1:
-                    continue
-                title_context = before_context[:category_pos]
+        if not newslist_match:
+            # 備用：嘗試更寬鬆的匹配
+            newslist_match = re.search(
+                r'id="contFix"[^>]*>(.*?)</div>\s*</div>\s*</div>\s*<!--',
+                content,
+                re.DOTALL | re.IGNORECASE
+            )
+        
+        if newslist_match:
+            content_to_parse = newslist_match.group(1)
+            print(f"  ✓ 成功擷取 viewallNewsList div，內容長度: {len(content_to_parse)} 字元")
+        else:
+            # 最後備用：從第一個 NewsID 開始取
+            first_news_match = re.search(r'<a[^>]*href="[^"]*NewsID=', content, re.IGNORECASE)
+            if first_news_match:
+                start_pos = max(0, first_news_match.start() - 200)
+                content_to_parse = content[start_pos:start_pos + 50000]
+                print(f"  ⚠ 未找到 contFix div，從第一個 NewsID 開始提取")
             else:
-                title_context = before_context
-            
-            # 提取連結
-            found_links = re.findall(self.config.link_pattern, title_context, re.IGNORECASE)
-            if found_links:
-                title, link = found_links[-1]
-                links.append((title.strip(), link))
+                content_to_parse = content[len(content)//4:len(content)*3//4]
+                print(f"  ⚠ 未找到新聞區塊，使用備用方式")
         
-        return links
+        # 進一步清理 HTML，只保留關鍵資訊
+        # 移除 script, style, img, input, noscript 標籤
+        content_to_parse = re.sub(r'<script[^>]*>.*?</script>', '', content_to_parse, flags=re.DOTALL | re.IGNORECASE)
+        content_to_parse = re.sub(r'<style[^>]*>.*?</style>', '', content_to_parse, flags=re.DOTALL | re.IGNORECASE)
+        content_to_parse = re.sub(r'<noscript[^>]*>.*?</noscript>', '', content_to_parse, flags=re.DOTALL | re.IGNORECASE)
+        content_to_parse = re.sub(r'<img[^>]*/?>', '', content_to_parse, flags=re.IGNORECASE)
+        content_to_parse = re.sub(r'<input[^>]*/?>', '', content_to_parse, flags=re.IGNORECASE)
+        # 移除 HTML 註解
+        content_to_parse = re.sub(r'<!--.*?-->', '', content_to_parse, flags=re.DOTALL)
+        # 移除空的 div 和 span
+        content_to_parse = re.sub(r'<(div|span)[^>]*>\s*</(div|span)>', '', content_to_parse, flags=re.IGNORECASE)
+        # 移除多餘空白和換行
+        content_to_parse = re.sub(r'\s+', ' ', content_to_parse)
+        # 移除不需要的屬性（只保留 href 和 class）
+        content_to_parse = re.sub(r'\s+(style|onclick|onmouseover|data-[a-z-]+|pl|target|onerror|width|height|alt)="[^"]*"', '', content_to_parse, flags=re.IGNORECASE)
+        
+        print(f"  清理後內容長度: {len(content_to_parse)} 字元")
+        
+        # 儲存傳給 LLM 的清理後內容（用於 debug）
+        if save_dir and page_num is not None:
+            llm_input_filename = f"{save_dir}/page_{page_num}_llm_input.html"
+            with open(llm_input_filename, "w", encoding="utf-8") as f:
+                f.write(f"<!-- 第 {page_num} 頁 - 傳給 LLM 的清理後內容 -->\n")
+                f.write(f"<!-- 目標日期: {date_str} -->\n")
+                f.write(f"<!-- 內容長度: {len(content_to_parse)} 字元 -->\n\n")
+                f.write(content_to_parse)
+            print(f"  ✓ LLM 輸入內容已儲存: {llm_input_filename}")
+        
+        # 檢查內容是否太短
+        if len(content_to_parse.strip()) < 100:
+            print(f"  ✗ 清理後內容太短 ({len(content_to_parse)} 字元)，跳過 LLM 處理")
+            print(f"  內容預覽: {content_to_parse[:200]}")
+            return []
+        
+        # 限制內容長度避免 token 過多
+        max_content_len = 8000  # 恢復較大的限制
+        if len(content_to_parse) > max_content_len:
+            content_to_parse = content_to_parse[:max_content_len]
+        
+        # 構建類別過濾提示
+        category_hint = ""
+        if self.config.target_category:
+            category_hint = f"優先提取類別為「{self.config.target_category}」的新聞，但如果找不到也可以提取其他類別。"
+        
+        # 構建 HTML 範例提示
+        html_example_section = ""
+        if self.config.html_example:
+            html_example_section = f"""HTML 中一則新聞的結構範例：
+```html
+{self.config.html_example}
+```
+{self.config.html_example_description or ''}
+"""
+        
+        extract_query = f"""從以下 HTML 內容中提取新聞列表。
+
+重要篩選條件：
+1. 只提取日期為「{date_str}」的新聞（日期格式如 01/05、2026/01/05 等）
+2. {category_hint if category_hint else "不限類別"}
+
+{html_example_section}
+請提取每則符合日期條件的新聞：
+1. 標題
+2. 連結（格式如 /News.aspx?NewsID=xxx）
+
+HTML 內容：
+{content_to_parse}
+
+請用以下 JSON 格式回答（只回答 JSON，不要其他文字）：
+[
+  {{"title": "新聞標題1", "link": "/News.aspx?NewsID=123456"}},
+  {{"title": "新聞標題2", "link": "/News.aspx?NewsID=234567"}}
+]
+
+注意：只回傳日期為「{date_str}」的新聞（比對 <time> 標籤中的日期），其他日期的新聞請忽略。
+如果沒有找到符合條件的新聞，回答空陣列 []"""
+
+        try:
+            print(f"  正在呼叫 LLM 提取新聞連結...")
+            print(f"  傳送內容長度: {len(content_to_parse)} 字元")
+            response = self.llm.invoke(extract_query)
+            result_text = response.content.strip()
+            print(f"  LLM 回應長度: {len(result_text)} 字元")
+            print(f"  LLM 回應內容: {result_text[:300]}...")
+            
+            # 儲存 LLM 回應以便 debug
+            if save_dir and page_num is not None:
+                llm_response_filename = f"{save_dir}/page_{page_num}_llm_response.txt"
+                with open(llm_response_filename, "w", encoding="utf-8") as f:
+                    f.write(f"# LLM 回應 - 第 {page_num} 頁\n")
+                    f.write(f"目標日期: {date_str}\n")
+                    f.write(f"回應長度: {len(result_text)} 字元\n\n")
+                    f.write("---\n\n")
+                    f.write(result_text)
+                print(f"  ✓ LLM 回應已儲存: {llm_response_filename}")
+            
+            # 嘗試解析 JSON
+            # 移除可能的 markdown 代碼塊標記
+            result_text = re.sub(r'^```json\s*', '', result_text)
+            result_text = re.sub(r'^```\s*', '', result_text)
+            result_text = re.sub(r'\s*```$', '', result_text)
+            
+            # 移除 Qwen 模型的思考過程（<think>...</think>）
+            result_text = re.sub(r'<think>.*?</think>', '', result_text, flags=re.DOTALL)
+            result_text = result_text.strip()
+            
+            # 嘗試解析 JSON
+            try:
+                news_list = json.loads(result_text)
+            except json.JSONDecodeError:
+                # 嘗試修復截斷的 JSON
+                print(f"  嘗試修復截斷的 JSON...")
+                # 找到最後一個完整的物件
+                last_complete = result_text.rfind('},')
+                if last_complete > 0:
+                    result_text = result_text[:last_complete+1] + ']'
+                    news_list = json.loads(result_text)
+                else:
+                    # 嘗試只取第一個物件
+                    first_obj_end = result_text.find('}')
+                    if first_obj_end > 0:
+                        result_text = '[' + result_text[result_text.find('{'):first_obj_end+1] + ']'
+                        news_list = json.loads(result_text)
+                    else:
+                        raise
+            
+            links = []
+            for item in news_list:
+                title = item.get('title', '').strip()
+                link = item.get('link', '').strip()
+                
+                if title and link:
+                    # 組合完整連結
+                    if not link.startswith('http'):
+                        full_link = f"https://www.setn.com{link}"
+                    else:
+                        full_link = link
+                    links.append((title, full_link))
+            
+            return links
+            
+        except json.JSONDecodeError as e:
+            print(f"  LLM 回應解析失敗: {e}")
+            print(f"  回應內容前 500 字: {result_text[:500]}")
+            print(f"  回應內容後 200 字: {result_text[-200:] if len(result_text) > 200 else result_text}")
+            return []
+        except Exception as e:
+            print(f"  LLM 提取錯誤: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
     
     def extract_article_info(self, content: str) -> Tuple[str, str]:
         """
@@ -231,6 +419,11 @@ class NewsScraper:
         date_str = target_date.strftime("%m/%d")
         date_str_full = target_date.strftime("%Y/%m/%d")
         
+        # 建立儲存原始資料的資料夾
+        raw_data_dir = f"raw_data_{target_date.strftime('%Y%m%d')}"
+        os.makedirs(raw_data_dir, exist_ok=True)
+        print(f"✓ 原始資料將儲存至資料夾: {raw_data_dir}")
+        
         print("="*80)
         print(f"步驟 1: 抓取新聞列表 (日期: {date_str_full})")
         print("="*80)
@@ -242,10 +435,21 @@ class NewsScraper:
             page_url = f"{self.config.base_url}&p={page}"
             print(f"\n正在抓取第 {page} 頁: {page_url}")
             
-            raw_content = self.scrape_page(page_url, self.config.list_tags)
+            # 直接用 requests 抓取列表頁（不用 Firecrawl）
+            raw_content = self.scrape_list_page(page_url)
             print(f"  抓取到內容長度: {len(raw_content)} 字元")
             
-            page_links = self.extract_news_links(raw_content, date_str_full)
+            # 儲存每頁的原始內容
+            if raw_content:
+                page_filename = f"{raw_data_dir}/page_{page}.md"
+                with open(page_filename, "w", encoding="utf-8") as f:
+                    f.write(f"# 第 {page} 頁 - {page_url}\n\n")
+                    f.write(f"抓取時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                    f.write("---\n\n")
+                    f.write(raw_content)
+                print(f"  ✓ 原始內容已儲存: {page_filename}")
+            
+            page_links = self.extract_news_links(raw_content, date_str_full, save_dir=raw_data_dir, page_num=page)
             all_links.extend(page_links)
             
             print(f"  本頁找到 {len(page_links)} 個新聞")
@@ -271,6 +475,20 @@ class NewsScraper:
             print(f"  標題: {title}")
             
             article_content = self.scrape_page(link, self.config.article_tags)
+            
+            # 儲存每篇文章的原始內容
+            if article_content:
+                # 從連結提取新聞 ID 作為檔案名稱
+                news_id = link.split('newsid=')[-1].split('&')[0] if 'newsid=' in link else str(i)
+                article_filename = f"{raw_data_dir}/article_{news_id}.md"
+                with open(article_filename, "w", encoding="utf-8") as f:
+                    f.write(f"# {title}\n\n")
+                    f.write(f"連結: {link}\n")
+                    f.write(f"抓取時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                    f.write("---\n\n")
+                    f.write(article_content)
+                print(f"  ✓ 原始文章已儲存: {article_filename}")
+            
             reporter, summary = self.extract_article_info(article_content[:2000])
             
             articles_data.append({
@@ -298,5 +516,5 @@ class NewsScraper:
         
         print(f"\n✓ 結果已儲存至 {output_file}")
         print(f"✓ 共處理 {len(articles_data)} 篇新聞")
-        
-        return result
+        print(f"✓ 原始資料已儲存至 {raw_data_dir} 資料夾")
+        print("  包含：每頁的原始內容、各篇文章的原始內容")

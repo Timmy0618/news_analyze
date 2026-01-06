@@ -1,16 +1,16 @@
 services:
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:main
-    container_name: open-webui
-    ports:
-      - "3000:8080"
-    environment:
-      - OLLAMA_BASE_URL=http://ollama:11434
-    volumes:
-      - ./open-webui:/app/backend/data
-    # restart: always
-    depends_on:
-      - ollama
+  # open-webui:
+  #   image: ghcr.io/open-webui/open-webui:main
+  #   container_name: open-webui
+  #   ports:
+  #     - "3000:8080"
+  #   environment:
+  #     - OLLAMA_BASE_URL=http://ollama:11434
+  #   volumes:
+  #     - ./open-webui:/app/backend/data
+  #   # restart: always
+  #   depends_on:
+  #     - vllm
 
   searxng:
     image: searxng/searxng:latest
@@ -31,7 +31,7 @@ services:
       - "8000:8000"
     volumes:
       - ./huggingface:/root/.cache/huggingface
-    command: --model Qwen/Qwen3-4B-Instruct-2507 --gpu-memory-utilization 0.90 --max-model-len 4096
+    command: --model Qwen/Qwen3-4B-Instruct-2507 --gpu-memory-utilization 0.90 --max-model-len 8192
     deploy:
       resources:
         reservations:
