@@ -222,6 +222,56 @@ class NewsScraper:
             cleaned = re.sub(r'\s+', ' ', cleaned)
             return cleaned, []
     
+    def fix_json_response(self, broken_json: str) -> str:
+        """
+        使用 LLM 修正格式錯誤的 JSON
+        
+        Args:
+            broken_json: 格式錯誤的 JSON 字串
+            
+        Returns:
+            修正後的 JSON 字串
+            
+        Raises:
+            json.JSONDecodeError: 如果修正失敗
+        """
+        print(f"  呼叫 LLM 修正 JSON 格式...")
+        
+        fix_query = f"""以下 JSON 格式有錯誤，請修正並只回傳正確的 JSON（不要其他文字）：
+
+錯誤的 JSON：
+{broken_json}
+
+要求：
+1. 只回傳修正後的 JSON 陣列
+2. 格式：[{{"title": "標題", "link": "連結"}}]
+3. 不要任何解釋或其他文字
+4. 確保 JSON 格式正確、完整"""
+
+        try:
+            fix_response = self.llm.invoke(fix_query)
+            fixed_text = fix_response.content.strip()
+            
+            # 清理修正後的回應
+            fixed_text = re.sub(r'^```json\s*', '', fixed_text)
+            fixed_text = re.sub(r'^```\s*', '', fixed_text)
+            fixed_text = re.sub(r'\s*```$', '', fixed_text)
+            fixed_text = re.sub(r'<think>.*?</think>', '', fixed_text, flags=re.DOTALL)
+            fixed_text = fixed_text.strip()
+            
+            print(f"  LLM 修正後的 JSON: {fixed_text[:200]}...")
+            
+            # 驗證修正後的 JSON 是否有效
+            json.loads(fixed_text)
+            print(f"  ✓ JSON 修正成功")
+            return fixed_text
+            
+        except json.JSONDecodeError as e:
+            print(f"  ✗ LLM 修正後仍然無效: {e}")
+            raise
+        except Exception as e:
+            print(f"  ✗ LLM 修正過程發生錯誤: {e}")
+            raise
 
     
     def extract_news_links(
@@ -252,10 +302,16 @@ class NewsScraper:
         
         # 使用可覆寫的方法清理 HTML
         print(f"  正在清理 HTML...")
-        cleaned_text, links_info = self.clean_html_to_text(content_to_parse)
+        result = self.clean_html_to_text(content_to_parse)
         
-        # 組合內容：文字 + 連結列表
-        content_to_parse = cleaned_text + "\n\n連結列表：\n" + "\n".join(links_info)
+        # clean_html_to_text 可能返回 (text, links) 或 只返回 text（如被子類覆寫）
+        if isinstance(result, tuple):
+            cleaned_text, links_info = result
+            # 組合內容：文字 + 連結列表
+            content_to_parse = cleaned_text + "\n\n連結列表：\n" + "\n".join(links_info)
+        else:
+            # 子類已經處理好了，直接使用
+            content_to_parse = result
         
         # 儲存傳給 LLM 的內容（用於 debug）
         if save_dir and page_num is not None:
@@ -336,22 +392,29 @@ class NewsScraper:
             # 嘗試解析 JSON
             try:
                 news_list = json.loads(result_text)
-            except json.JSONDecodeError:
-                # 嘗試修復截斷的 JSON
-                print(f"  嘗試修復截斷的 JSON...")
-                # 找到最後一個完整的物件
-                last_complete = result_text.rfind('},')
-                if last_complete > 0:
-                    result_text = result_text[:last_complete+1] + ']'
-                    news_list = json.loads(result_text)
-                else:
-                    # 嘗試只取第一個物件
-                    first_obj_end = result_text.find('}')
-                    if first_obj_end > 0:
-                        result_text = '[' + result_text[result_text.find('{'):first_obj_end+1] + ']'
+            except json.JSONDecodeError as json_err:
+                # JSON 解析失败，让 LLM 修正
+                print(f"  JSON 解析失敗: {json_err}")
+                
+                try:
+                    # 使用独立的修正方法
+                    fixed_text = self.fix_json_response(result_text)
+                    news_list = json.loads(fixed_text)
+                except Exception as fix_err:
+                    print(f"  ✗ LLM 修正失敗: {fix_err}")
+                    print(f"  嘗試手動修復...")
+                    # 降級方案：簡單的字串修復
+                    last_complete = result_text.rfind('},')
+                    if last_complete > 0:
+                        result_text = result_text[:last_complete+1] + ']'
                         news_list = json.loads(result_text)
                     else:
-                        raise
+                        first_obj_end = result_text.find('}')
+                        if first_obj_end > 0:
+                            result_text = '[' + result_text[result_text.find('{'):first_obj_end+1] + ']'
+                            news_list = json.loads(result_text)
+                        else:
+                            raise
             
             links = []
             for item in news_list:
