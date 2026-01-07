@@ -19,14 +19,7 @@ class NewsScraperConfig:
     def __init__(
         self,
         base_url: str,
-        list_tags: List[str],
         article_tags: List[str],
-        date_pattern: str,
-        category_pattern: str,
-        link_pattern: str,
-        target_category: Optional[str] = None,
-        html_example: Optional[str] = None,
-        html_example_description: Optional[str] = None,
         page_url_format: Optional[str] = None,
     ):
         """
@@ -34,25 +27,11 @@ class NewsScraperConfig:
         
         Args:
             base_url: 新聞列表頁的基礎 URL
-            list_tags: 新聞列表頁要抓取的 HTML 標籤
             article_tags: 文章頁要抓取的 HTML 標籤
-            date_pattern: 日期的正則表達式（使用 {date} 作為佔位符）
-            category_pattern: 類別的正則表達式
-            link_pattern: 連結的正則表達式（需包含兩個群組：標題和連結）
-            target_category: 目標類別（如 "政治"），None 表示不過濾
-            html_example: HTML 結構範例（用於 LLM 提示）
-            html_example_description: HTML 範例的說明（如何解讀各欄位）
             page_url_format: 換頁 URL 格式（使用 {page} 作為佔位符），None 表示使用預設格式 "&p={page}"
         """
         self.base_url = base_url
-        self.list_tags = list_tags
         self.article_tags = article_tags
-        self.date_pattern = date_pattern
-        self.category_pattern = category_pattern
-        self.link_pattern = link_pattern
-        self.target_category = target_category
-        self.html_example = html_example
-        self.html_example_description = html_example_description
         self.page_url_format = page_url_format
 
 
@@ -193,6 +172,58 @@ class NewsScraper:
         parsed = urlparse(self.config.base_url)
         return f"{parsed.scheme}://{parsed.netloc}{link}"
     
+    def clean_html_to_text(self, content: str) -> Tuple[str, List[str]]:
+        """
+        將 HTML 清理成純文本格式（可被子類覆寫以自訂清理方式）
+        
+        Args:
+            content: HTML 內容
+            
+        Returns:
+            (清理後的文本, 連結列表) 的元組
+        """
+        try:
+            from bs4 import BeautifulSoup
+            
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # 移除不需要的標籤
+            for tag in soup(['script', 'style', 'noscript', 'iframe', 'img', 'svg']):
+                tag.decompose()
+            
+            # 提取文字內容
+            cleaned_text = soup.get_text(separator='\n', strip=True)
+            
+            # 提取連結
+            links_info = []
+            for link in soup.find_all('a', href=True):
+                link_text = link.get_text(strip=True)
+                link_href = link.get('href', '')
+                if link_text and link_href:
+                    links_info.append(f"[{link_text}]({link_href})")
+            
+            print(f"  ✓ HTML 清理完成，內容長度: {len(cleaned_text)} 字元，找到 {len(links_info)} 個連結")
+            return cleaned_text, links_info
+            
+        except ImportError:
+            print(f"  ⚠ BeautifulSoup 未安裝，使用基本清理方式")
+            # 降級方案：基本的 regex 清理
+            cleaned = re.sub(r'<script[^>]*>.*?</script>', '', content, flags=re.DOTALL | re.IGNORECASE)
+            cleaned = re.sub(r'<style[^>]*>.*?</style>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+            cleaned = re.sub(r'<[^>]+>', ' ', cleaned)
+            cleaned = re.sub(r'\s+', ' ', cleaned)
+            print(f"  ✓ 基本清理完成，內容長度: {len(cleaned)} 字元")
+            return cleaned, []
+        except Exception as e:
+            print(f"  ⚠ HTML 清理錯誤: {e}，使用基本方式")
+            cleaned = re.sub(r'<script[^>]*>.*?</script>', '', content, flags=re.DOTALL | re.IGNORECASE)
+            cleaned = re.sub(r'<style[^>]*>.*?</style>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+            cleaned = re.sub(r'<[^>]+>', ' ', cleaned)
+            cleaned = re.sub(r'\s+', ' ', cleaned)
+            return cleaned, []
+    
+
+    
     def extract_news_links(
         self, 
         content: str, 
@@ -201,7 +232,7 @@ class NewsScraper:
         page_num: Optional[int] = None
     ) -> List[Tuple[str, str]]:
         """
-        使用 LLM 從 HTML 內容中提取新聞連結
+        使用 LLM 從 HTML 內容中提取新聞連結（子類可覆寫 build_extract_query 自訂提取規則）
         
         Args:
             content: 頁面 HTML 內容
@@ -219,31 +250,21 @@ class NewsScraper:
             print(f"  ✗ 無法提取新聞區塊")
             return []
         
-        # 進一步清理 HTML，只保留關鍵資訊
-        # 移除 script, style, img, input, noscript 標籤
-        content_to_parse = re.sub(r'<script[^>]*>.*?</script>', '', content_to_parse, flags=re.DOTALL | re.IGNORECASE)
-        content_to_parse = re.sub(r'<style[^>]*>.*?</style>', '', content_to_parse, flags=re.DOTALL | re.IGNORECASE)
-        content_to_parse = re.sub(r'<noscript[^>]*>.*?</noscript>', '', content_to_parse, flags=re.DOTALL | re.IGNORECASE)
-        content_to_parse = re.sub(r'<img[^>]*/?>', '', content_to_parse, flags=re.IGNORECASE)
-        content_to_parse = re.sub(r'<input[^>]*/?>', '', content_to_parse, flags=re.IGNORECASE)
-        # 移除 HTML 註解
-        content_to_parse = re.sub(r'<!--.*?-->', '', content_to_parse, flags=re.DOTALL)
-        # 移除空的 div 和 span
-        content_to_parse = re.sub(r'<(div|span)[^>]*>\s*</(div|span)>', '', content_to_parse, flags=re.IGNORECASE)
-        # 移除多餘空白和換行
-        content_to_parse = re.sub(r'\s+', ' ', content_to_parse)
-        # 移除不需要的屬性（只保留 href 和 class）
-        content_to_parse = re.sub(r'\s+(style|onclick|onmouseover|data-[a-z-]+|pl|target|onerror|width|height|alt)="[^"]*"', '', content_to_parse, flags=re.IGNORECASE)
+        # 使用可覆寫的方法清理 HTML
+        print(f"  正在清理 HTML...")
+        cleaned_text, links_info = self.clean_html_to_text(content_to_parse)
         
-        print(f"  清理後內容長度: {len(content_to_parse)} 字元")
+        # 組合內容：文字 + 連結列表
+        content_to_parse = cleaned_text + "\n\n連結列表：\n" + "\n".join(links_info)
         
-        # 儲存傳給 LLM 的清理後內容（用於 debug）
+        # 儲存傳給 LLM 的內容（用於 debug）
         if save_dir and page_num is not None:
-            llm_input_filename = f"{save_dir}/page_{page_num}_llm_input.html"
+            llm_input_filename = f"{save_dir}/page_{page_num}_llm_input.txt"
             with open(llm_input_filename, "w", encoding="utf-8") as f:
-                f.write(f"<!-- 第 {page_num} 頁 - 傳給 LLM 的清理後內容 -->\n")
-                f.write(f"<!-- 目標日期: {date_str} -->\n")
-                f.write(f"<!-- 內容長度: {len(content_to_parse)} 字元 -->\n\n")
+                f.write(f"# 第 {page_num} 頁 - 傳給 LLM 的清理後內容\n\n")
+                f.write(f"目標日期: {date_str}\n")
+                f.write(f"內容長度: {len(content_to_parse)} 字元\n\n")
+                f.write("---\n\n")
                 f.write(content_to_parse)
             print(f"  ✓ LLM 輸入內容已儲存: {llm_input_filename}")
         
@@ -254,50 +275,34 @@ class NewsScraper:
             return []
         
         # 限制內容長度避免 token 過多
-        max_content_len = 8000  # 恢復較大的限制
+        max_content_len = 8000
         if len(content_to_parse) > max_content_len:
             content_to_parse = content_to_parse[:max_content_len]
         
-        # 構建類別過濾提示
-        category_hint = ""
-        if self.config.target_category:
-            category_hint = f"優先提取類別為「{self.config.target_category}」的新聞，但如果找不到也可以提取其他類別。"
+        # 從目標日期中提取月/日格式（如 "2026/01/07" → "01/07"）
+        target_date_short = date_str.split('/')[-2] + '/' + date_str.split('/')[-1]
         
-        # 構建 HTML 範例提示
-        html_example_section = ""
-        if self.config.html_example:
-            html_example_section = f"""HTML 中一則新聞的結構範例：
-```html
-{self.config.html_example}
-```
-{self.config.html_example_description or ''}
-"""
-        
-        extract_query = f"""從以下 HTML 內容中提取新聞列表。
+        # 構建通用的 LLM 查詢
+        extract_query = f"""從以下內容中提取日期為「{target_date_short}」的新聞。
 
-重要篩選條件：
-1. 只提取日期為「{date_str}」的新聞（日期格式如 01/05、2026/01/05 等）
-2. {category_hint if category_hint else "不限類別"}
+內容格式：
+- 每則新聞包含：日期時間 → 類別 → 標題
+- 文末有「連結列表：」包含所有連結，格式為 [標題](連結)
 
-{html_example_section}
-請提取每則符合日期條件的新聞：
-1. 標題（在 <h3 class="title"> 或類似標籤中）
-2. 連結（在 href 屬性中，格式如 /News.aspx?NewsID=xxx 或 /realtimenews/xxx）
+任務：
+1. 找出所有日期開頭為「{target_date_short}」的新聞
+2. 提取其標題
+3. 從「連結列表：」中找到標題完全匹配的連結
 
-HTML 內容：
+內容：
 {content_to_parse}
 
-請用以下 JSON 格式回答（只回答 JSON，不要其他文字）：
+請用 JSON 格式回答（只輸出 JSON）：
 [
-  {{"title": "新聞標題1", "link": "/News.aspx?NewsID=123456"}},
-  {{"title": "新聞標題2", "link": "/realtimenews/20260107001962-260407"}}
+  {{"title": "新聞標題", "link": "/news/123456"}}
 ]
 
-注意：
-1. 只回傳日期為「{date_str}」的新聞（比對 <time> 或 <span class="date"> 標籤中的日期）
-2. 連結保持相對路徑格式（不要加上 https://...）
-3. 其他日期的新聞請忽略
-4. 如果沒有找到符合條件的新聞，回答空陣列 []"""
+注意：只提取日期為「{target_date_short}」的新聞，連結保持原格式。找不到則回答 []"""
 
         try:
             print(f"  正在呼叫 LLM 提取新聞連結...")
