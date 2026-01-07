@@ -27,6 +27,7 @@ class NewsScraperConfig:
         target_category: Optional[str] = None,
         html_example: Optional[str] = None,
         html_example_description: Optional[str] = None,
+        page_url_format: Optional[str] = None,
     ):
         """
         初始化爬蟲配置
@@ -41,6 +42,7 @@ class NewsScraperConfig:
             target_category: 目標類別（如 "政治"），None 表示不過濾
             html_example: HTML 結構範例（用於 LLM 提示）
             html_example_description: HTML 範例的說明（如何解讀各欄位）
+            page_url_format: 換頁 URL 格式（使用 {page} 作為佔位符），None 表示使用預設格式 "&p={page}"
         """
         self.base_url = base_url
         self.list_tags = list_tags
@@ -51,6 +53,7 @@ class NewsScraperConfig:
         self.target_category = target_category
         self.html_example = html_example
         self.html_example_description = html_example_description
+        self.page_url_format = page_url_format
 
 
 class NewsScraper:
@@ -80,7 +83,6 @@ class NewsScraper:
             api_key=os.getenv("token", "EMPTY"),
             model=model_name,
             temperature=0.7,
-            max_tokens=512,  # 降低以符合 4B 模型的 context 限制
         )
     
     def scrape_page(self, url: str, tags: List[str]) -> str:
@@ -117,6 +119,22 @@ class NewsScraper:
             print(f"  抓取錯誤: {e}")
             return ""
     
+    def get_page_url(self, page: int) -> str:
+        """
+        生成分頁 URL（可被子類覆寫以實現自訂換頁邏輯）
+        
+        Args:
+            page: 頁碼
+            
+        Returns:
+            該頁的完整 URL
+        """
+        if self.config.page_url_format:
+            return self.config.page_url_format.format(page=page)
+        else:
+            # 預設格式（如三立新聞）
+            return f"{self.config.base_url}&p={page}"
+    
     def scrape_list_page(self, url: str) -> str:
         """
         直接用 requests 抓取列表頁面（不使用 Firecrawl）
@@ -141,6 +159,40 @@ class NewsScraper:
             print(f"  抓取錯誤: {e}")
             return ""
     
+    def extract_news_block(self, content: str) -> Optional[str]:
+        """
+        從完整頁面 HTML 中提取新聞列表區塊（建議子類覆寫此方法）
+        
+        Args:
+            content: 完整頁面 HTML
+            
+        Returns:
+            新聞列表區塊的 HTML，如果找不到則返回 None
+        """
+        # 預設實現：返回頁面中間部分作為備用
+        # 建議：每個網站都應該創建子類並覆寫此方法
+        print(f"  ⚠ 使用預設 extract_news_block 方法，建議為該網站創建專用子類")
+        return content[len(content)//4:len(content)*3//4]
+    
+    def build_full_link(self, link: str) -> str:
+        """
+        將相對路徑轉換為完整 URL（建議子類覆寫此方法）
+        
+        Args:
+            link: 相對或絕對路徑
+            
+        Returns:
+            完整的 URL
+        """
+        if link.startswith('http'):
+            return link
+        
+        # 預設實現：使用 base_url 的 domain
+        # 建議：每個網站都應該創建子類並覆寫此方法
+        from urllib.parse import urlparse
+        parsed = urlparse(self.config.base_url)
+        return f"{parsed.scheme}://{parsed.netloc}{link}"
+    
     def extract_news_links(
         self, 
         content: str, 
@@ -160,34 +212,12 @@ class NewsScraper:
         Returns:
             [(標題, 連結), ...] 的列表
         """
-        # 直接抓取 <div class="container main-news-area viewallNewsList" id="contFix"> 這個 div 的內容
-        newslist_match = re.search(
-            r'<div\s+class="container main-news-area viewallNewsList"\s+id="contFix"[^>]*>(.*?)</div>\s*<!--\s*contFix',
-            content, 
-            re.DOTALL | re.IGNORECASE
-        )
+        # 使用可覆寫的方法提取新聞區塊
+        content_to_parse = self.extract_news_block(content)
         
-        if not newslist_match:
-            # 備用：嘗試更寬鬆的匹配
-            newslist_match = re.search(
-                r'id="contFix"[^>]*>(.*?)</div>\s*</div>\s*</div>\s*<!--',
-                content,
-                re.DOTALL | re.IGNORECASE
-            )
-        
-        if newslist_match:
-            content_to_parse = newslist_match.group(1)
-            print(f"  ✓ 成功擷取 viewallNewsList div，內容長度: {len(content_to_parse)} 字元")
-        else:
-            # 最後備用：從第一個 NewsID 開始取
-            first_news_match = re.search(r'<a[^>]*href="[^"]*NewsID=', content, re.IGNORECASE)
-            if first_news_match:
-                start_pos = max(0, first_news_match.start() - 200)
-                content_to_parse = content[start_pos:start_pos + 50000]
-                print(f"  ⚠ 未找到 contFix div，從第一個 NewsID 開始提取")
-            else:
-                content_to_parse = content[len(content)//4:len(content)*3//4]
-                print(f"  ⚠ 未找到新聞區塊，使用備用方式")
+        if not content_to_parse:
+            print(f"  ✗ 無法提取新聞區塊")
+            return []
         
         # 進一步清理 HTML，只保留關鍵資訊
         # 移除 script, style, img, input, noscript 標籤
@@ -251,8 +281,8 @@ class NewsScraper:
 
 {html_example_section}
 請提取每則符合日期條件的新聞：
-1. 標題
-2. 連結（格式如 /News.aspx?NewsID=xxx）
+1. 標題（在 <h3 class="title"> 或類似標籤中）
+2. 連結（在 href 屬性中，格式如 /News.aspx?NewsID=xxx 或 /realtimenews/xxx）
 
 HTML 內容：
 {content_to_parse}
@@ -260,11 +290,14 @@ HTML 內容：
 請用以下 JSON 格式回答（只回答 JSON，不要其他文字）：
 [
   {{"title": "新聞標題1", "link": "/News.aspx?NewsID=123456"}},
-  {{"title": "新聞標題2", "link": "/News.aspx?NewsID=234567"}}
+  {{"title": "新聞標題2", "link": "/realtimenews/20260107001962-260407"}}
 ]
 
-注意：只回傳日期為「{date_str}」的新聞（比對 <time> 標籤中的日期），其他日期的新聞請忽略。
-如果沒有找到符合條件的新聞，回答空陣列 []"""
+注意：
+1. 只回傳日期為「{date_str}」的新聞（比對 <time> 或 <span class="date"> 標籤中的日期）
+2. 連結保持相對路徑格式（不要加上 https://...）
+3. 其他日期的新聞請忽略
+4. 如果沒有找到符合條件的新聞，回答空陣列 []"""
 
         try:
             print(f"  正在呼叫 LLM 提取新聞連結...")
@@ -321,11 +354,8 @@ HTML 內容：
                 link = item.get('link', '').strip()
                 
                 if title and link:
-                    # 組合完整連結
-                    if not link.startswith('http'):
-                        full_link = f"https://www.setn.com{link}"
-                    else:
-                        full_link = link
+                    # 使用可覆寫的方法組合完整連結
+                    full_link = self.build_full_link(link)
                     links.append((title, full_link))
             
             return links
@@ -432,7 +462,8 @@ HTML 內容：
         
         # 抓取多個分頁
         for page in range(1, num_pages + 1):
-            page_url = f"{self.config.base_url}&p={page}"
+            # 使用 get_page_url 方法生成換頁 URL（可被子類覆寫）
+            page_url = self.get_page_url(page)
             print(f"\n正在抓取第 {page} 頁: {page_url}")
             
             # 直接用 requests 抓取列表頁（不用 Firecrawl）
@@ -518,3 +549,5 @@ HTML 內容：
         print(f"✓ 共處理 {len(articles_data)} 篇新聞")
         print(f"✓ 原始資料已儲存至 {raw_data_dir} 資料夾")
         print("  包含：每頁的原始內容、各篇文章的原始內容")
+        
+        return result
