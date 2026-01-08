@@ -43,7 +43,7 @@ class NewsScraper:
         config: NewsScraperConfig,
         firecrawl_url: str = "http://localhost:3002",
         llm_url: str = "http://localhost:8000/v1",
-        model_name: str = "Qwen/Qwen3-4B-Instruct-2507",
+        model_name: str = "Qwen/Qwen2.5-3B-Instruct-GPTQ-Int4",
     ):
         """
         初始化爬蟲
@@ -62,6 +62,7 @@ class NewsScraper:
             api_key=os.getenv("token", "EMPTY"),
             model=model_name,
             temperature=0.7,
+            timeout=120,
         )
     
     def scrape_page(self, url: str, tags: List[str]) -> str:
@@ -222,12 +223,14 @@ class NewsScraper:
             cleaned = re.sub(r'\s+', ' ', cleaned)
             return cleaned, []
     
-    def fix_json_response(self, broken_json: str) -> str:
+    def fix_json_response(self, broken_json: str, save_dir: Optional[str] = None, page_num: Optional[int] = None) -> str:
         """
         使用 LLM 修正格式錯誤的 JSON
         
         Args:
             broken_json: 格式錯誤的 JSON 字串
+            save_dir: 儲存 debug 資料的資料夾（可選）
+            page_num: 頁碼（可選，用於檔名）
             
         Returns:
             修正後的 JSON 字串
@@ -248,9 +251,27 @@ class NewsScraper:
 3. 不要任何解釋或其他文字
 4. 確保 JSON 格式正確、完整"""
 
+        # 儲存傳給 LLM 的 query（用於 debug）
+        if save_dir and page_num is not None:
+            llm_fix_input_filename = f"{save_dir}/page_{page_num}_llm_fix_input.txt"
+            with open(llm_fix_input_filename, "w", encoding="utf-8") as f:
+                f.write(f"# 第 {page_num} 頁 - JSON 修正的 LLM Query\n\n")
+                f.write("---\n\n")
+                f.write(fix_query)
+            print(f"  ✓ LLM Fix Query 已儲存: {llm_fix_input_filename}")
+
         try:
             fix_response = self.llm.invoke(fix_query)
             fixed_text = fix_response.content.strip()
+            
+            # 儲存 LLM 回應以便 debug
+            if save_dir and page_num is not None:
+                llm_fix_response_filename = f"{save_dir}/page_{page_num}_llm_fix_response.txt"
+                with open(llm_fix_response_filename, "w", encoding="utf-8") as f:
+                    f.write(f"# 第 {page_num} 頁 - JSON 修正的 LLM Response\n\n")
+                    f.write("---\n\n")
+                    f.write(fixed_text)
+                print(f"  ✓ LLM Fix Response 已儲存: {llm_fix_response_filename}")
             
             # 清理修正後的回應
             fixed_text = re.sub(r'^```json\s*', '', fixed_text)
@@ -360,6 +381,15 @@ class NewsScraper:
 
 注意：只提取日期為「{target_date_short}」的新聞，連結保持原格式。找不到則回答 []"""
 
+        # 儲存傳給 LLM 的 query（用於 debug）
+        if save_dir and page_num is not None:
+            llm_query_filename = f"{save_dir}/page_{page_num}_llm_query.txt"
+            with open(llm_query_filename, "w", encoding="utf-8") as f:
+                f.write(f"# 第 {page_num} 頁 - 提取新聞連結的 LLM Query\n\n")
+                f.write("---\n\n")
+                f.write(extract_query)
+            print(f"  ✓ LLM Query 已儲存: {llm_query_filename}")
+
         try:
             print(f"  正在呼叫 LLM 提取新聞連結...")
             print(f"  傳送內容長度: {len(content_to_parse)} 字元")
@@ -398,7 +428,7 @@ class NewsScraper:
                 
                 try:
                     # 使用独立的修正方法
-                    fixed_text = self.fix_json_response(result_text)
+                    fixed_text = self.fix_json_response(result_text, save_dir=save_dir, page_num=page_num)
                     news_list = json.loads(fixed_text)
                 except Exception as fix_err:
                     print(f"  ✗ LLM 修正失敗: {fix_err}")
@@ -439,12 +469,14 @@ class NewsScraper:
             traceback.print_exc()
             return []
     
-    def extract_article_info(self, content: str) -> Tuple[str, str]:
+    def extract_article_info(self, content: str, save_dir: Optional[str] = None, article_id: str = "") -> Tuple[str, str]:
         """
         使用 LLM 提取記者和大綱
         
         Args:
             content: 文章內容
+            save_dir: 儲存 debug 資料的資料夾（可選）
+            article_id: 文章 ID（用於檔名）
             
         Returns:
             (記者, 大綱) 的元組
@@ -465,9 +497,28 @@ class NewsScraper:
 - 重點2
 - 重點3"""
 
+        # 儲存傳給 LLM 的 query（用於 debug）
+        if save_dir and article_id:
+            llm_input_filename = f"{save_dir}/article_{article_id}_llm_input.txt"
+            with open(llm_input_filename, "w", encoding="utf-8") as f:
+                f.write(f"# 文章 {article_id} - 提取記者和大綱的 LLM Query\n\n")
+                f.write("---\n\n")
+                f.write(extract_query)
+            print(f"  ✓ LLM Query 已儲存: {llm_input_filename}")
+
         try:
+            print(extract_query)
             response = self.llm.invoke(extract_query)
             result_text = response.content.strip()
+            
+            # 儲存 LLM 回應以便 debug
+            if save_dir and article_id:
+                llm_response_filename = f"{save_dir}/article_{article_id}_llm_response.txt"
+                with open(llm_response_filename, "w", encoding="utf-8") as f:
+                    f.write(f"# 文章 {article_id} - 提取記者和大綱的 LLM Response\n\n")
+                    f.write("---\n\n")
+                    f.write(result_text)
+                print(f"  ✓ LLM Response 已儲存: {llm_response_filename}")
             
             # 解析記者
             reporter = "未提及"
@@ -587,8 +638,10 @@ class NewsScraper:
                     f.write("---\n\n")
                     f.write(article_content)
                 print(f"  ✓ 原始文章已儲存: {article_filename}")
+            else:
+                news_id = link.split('newsid=')[-1].split('&')[0] if 'newsid=' in link else str(i)
             
-            reporter, summary = self.extract_article_info(article_content[:2000])
+            reporter, summary = self.extract_article_info(article_content[:2000], save_dir=raw_data_dir, article_id=news_id)
             
             articles_data.append({
                 "標題": title,
