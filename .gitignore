@@ -14,3 +14,4 @@ open-webui/
 firecrawl/
 searxng/
 huggingface/
+logs/
