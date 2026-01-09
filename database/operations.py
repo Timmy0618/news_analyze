@@ -4,6 +4,7 @@
 """
 
 from typing import Dict, List, Optional
+from datetime import datetime, date
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from database.models import NewsArticle
@@ -96,14 +97,26 @@ def save_scraper_results_to_db(
                 title = article.get("標題") or article.get("title", "")
                 reporter = article.get("記者") or article.get("reporter", "")
                 summary = article.get("大綱") or article.get("summary", "")
-                publish_date = article.get("日期") or article.get("publish_date", "")
+                publish_date_str = article.get("日期") or article.get("publish_date", "")
                 source_url = article.get("連結") or article.get("source_url", "")
                 
                 # 驗證必填欄位
-                if not title or not source_url or not publish_date:
+                if not title or not source_url or not publish_date_str:
                     print(f"  ✗ 第 {idx} 篇：缺少必填欄位（標題、連結或日期）")
                     stats["failed"] += 1
                     continue
+                
+                # 轉換日期格式：YYYY/MM/DD -> date object
+                try:
+                    publish_date = datetime.strptime(publish_date_str, "%Y/%m/%d").date()
+                except ValueError:
+                    try:
+                        # 嘗試其他常見格式
+                        publish_date = datetime.strptime(publish_date_str, "%Y-%m-%d").date()
+                    except ValueError:
+                        print(f"  ✗ 第 {idx} 篇：日期格式不正確（{publish_date_str}），應為 YYYY/MM/DD 或 YYYY-MM-DD")
+                        stats["failed"] += 1
+                        continue
                 
                 # 檢查是否已存在（根據 source_url）
                 existing_article = db_session.query(NewsArticle).filter_by(
@@ -205,7 +218,7 @@ def save_articles_batch(
 
 
 def get_articles_by_date(
-    publish_date: str,
+    publish_date,
     source_site: Optional[str] = None,
     db_session: Optional[Session] = None
 ) -> List[NewsArticle]:
@@ -213,7 +226,7 @@ def get_articles_by_date(
     根據日期查詢文章
     
     Args:
-        publish_date: 發布日期（格式: YYYY/MM/DD）
+        publish_date: 發布日期（可以是字串 "YYYY/MM/DD" 或 "YYYY-MM-DD"，或 date 對象）
         source_site: 來源網站（選填，不提供則查詢所有網站）
         db_session: 資料庫 session（選填）
     
@@ -222,7 +235,13 @@ def get_articles_by_date(
     
     Example:
         ```python
+        # 使用字串
         articles = get_articles_by_date("2026/01/09", "TVBS")
+        
+        # 使用 date 對象
+        from datetime import date
+        articles = get_articles_by_date(date(2026, 1, 9), "TVBS")
+        
         for article in articles:
             print(f"{article.title} - {article.reporter}")
         ```
@@ -233,6 +252,16 @@ def get_articles_by_date(
         should_close_session = True
     
     try:
+        # 如果是字串，轉換為 date 對象
+        if isinstance(publish_date, str):
+            try:
+                publish_date = datetime.strptime(publish_date, "%Y/%m/%d").date()
+            except ValueError:
+                try:
+                    publish_date = datetime.strptime(publish_date, "%Y-%m-%d").date()
+                except ValueError:
+                    raise ValueError("日期格式不正確，請使用 YYYY/MM/DD 或 YYYY-MM-DD")
+        
         query = db_session.query(NewsArticle).filter_by(publish_date=publish_date)
         
         if source_site:

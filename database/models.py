@@ -3,7 +3,7 @@
 支援 pgvector 向量搜尋
 """
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, Index
+from sqlalchemy import Column, Integer, String, Text, DateTime, Date, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 from pgvector.sqlalchemy import Vector
@@ -25,7 +25,7 @@ class NewsArticle(Base):
     summary = Column(Text, comment='新聞大綱')
     
     # 日期和來源
-    publish_date = Column(String(20), nullable=False, comment='發布日期 (YYYY/MM/DD)')
+    publish_date = Column(Date, nullable=False, comment='發布日期')
     source_url = Column(String(1000), nullable=False, unique=True, comment='新聞連結')
     source_site = Column(String(50), comment='來源網站（如：TVBS、三立、中時）')
     
@@ -64,7 +64,7 @@ class NewsArticle(Base):
             'title': self.title,
             'reporter': self.reporter,
             'summary': self.summary,
-            'publish_date': self.publish_date,
+            'publish_date': self.publish_date.isoformat() if self.publish_date else None,
             'source_url': self.source_url,
             'source_site': self.source_site,
             'created_at': self.created_at.isoformat() if self.created_at else None,
