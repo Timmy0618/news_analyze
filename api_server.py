@@ -1,4 +1,4 @@
-"""
+﻿"""
 FastAPI 向量查詢服務
 提供新聞文章的語義搜尋功能
 """
@@ -12,11 +12,14 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
+from apscheduler.schedulers.background import BackgroundScheduler
+from contextlib import asynccontextmanager
 
 from database.config import DATABASE_URL
 from database.models import NewsArticle
 from utils.logger import get_logger
 from utils.jina_client import generate_embedding as jina_generate_embedding
+from utils.scheduler.tasks import run_embeddings, run_scrapers
 
 # 載入環境變數
 load_dotenv()
@@ -25,10 +28,23 @@ load_dotenv()
 logger = get_logger("api_server")
 
 # 建立 FastAPI 應用
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler = _setup_scheduler()
+    if scheduler:
+        app.state.scheduler = scheduler
+    try:
+        yield
+    finally:
+        scheduler = getattr(app.state, "scheduler", None)
+        if scheduler:
+            scheduler.shutdown(wait=False)
+
 app = FastAPI(
     title="新聞向量查詢 API",
     description="使用語義搜尋查詢政治新聞文章",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # 資料庫連線
@@ -37,6 +53,83 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Jina AI 設定（向後兼容）
 JINA_API_KEY = os.getenv("JINA_API_KEY")
+
+
+def _setup_scheduler() -> Optional[BackgroundScheduler]:
+    enabled = os.getenv("SCHEDULER_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not enabled:
+        logger.info("scheduler disabled via SCHEDULER_ENABLED")
+        return None
+
+    scheduler = BackgroundScheduler()
+
+    scrape_interval = int(os.getenv("SCRAPE_INTERVAL_MINUTES", "60"))
+    embed_interval = int(os.getenv("EMBED_INTERVAL_MINUTES", "60"))
+
+    if scrape_interval > 0:
+        scrape_pages = int(os.getenv("SCRAPE_PAGES", "1"))
+        scrape_max_articles = int(os.getenv("SCRAPE_MAX_ARTICLES", "15"))
+        scrape_no_db = os.getenv("SCRAPE_NO_DB", "false").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+        scheduler.add_job(
+            run_scrapers,
+            "interval",
+            minutes=scrape_interval,
+            id="scrapers",
+            replace_existing=True,
+            kwargs={
+                "pages": scrape_pages,
+                "max_articles": scrape_max_articles,
+                "save_to_db": not scrape_no_db,
+                "target_date": None,
+            },
+        )
+        logger.info("scheduler: scrapers every %s minutes", scrape_interval)
+    else:
+        logger.info("scheduler: scrapers disabled via SCRAPE_INTERVAL_MINUTES")
+
+    if embed_interval > 0:
+        embed_batch_size = int(os.getenv("EMBED_BATCH_SIZE", "10"))
+        embed_limit_val = os.getenv("EMBED_LIMIT", "")
+        embed_limit = int(embed_limit_val) if embed_limit_val else None
+        embed_force = os.getenv("EMBED_FORCE", "false").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+        scheduler.add_job(
+            run_embeddings,
+            "interval",
+            minutes=embed_interval,
+            id="embeddings",
+            replace_existing=True,
+            kwargs={
+                "batch_size": embed_batch_size,
+                "limit": embed_limit,
+                "force": embed_force,
+            },
+        )
+        logger.info("scheduler: embeddings every %s minutes", embed_interval)
+    else:
+        logger.info("scheduler: embeddings disabled via EMBED_INTERVAL_MINUTES")
+
+    if scheduler.get_jobs():
+        scheduler.start()
+        return scheduler
+
+    return None
 
 
 class SearchRequest(BaseModel):
@@ -108,6 +201,8 @@ async def root():
             "health": "/health"
         }
     }
+
+
 
 
 @app.get("/health")
@@ -336,3 +431,4 @@ if __name__ == "__main__":
         port=8001,
         reload=True
     )
+

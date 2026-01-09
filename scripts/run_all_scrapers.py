@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 # 添加專案根目錄到 Python 路徑
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scrapers.tvbs_scraper import TvbsScraper
 from scrapers.setn_scraper import SetnScraper

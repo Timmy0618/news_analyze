@@ -7,108 +7,21 @@ import os
 import sys
 from pathlib import Path
 from typing import List, Optional
-import requests
 from dotenv import load_dotenv
 
 # 添加專案根目錄到 Python 路徑
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from database.models import NewsArticle
 from database.config import Session
+from utils.logger import get_logger
+from utils.jina_client import JinaClient
 
 load_dotenv()
 
+# 建立 logger
+logger = get_logger("generate_embeddings")
 
-class JinaEmbeddingGenerator:
-    """Jina AI Embedding 生成器"""
-    
-    def __init__(self, api_key: Optional[str] = None):
-        """
-        初始化 Jina Embedding 生成器
-        
-        Args:
-            api_key: Jina AI API 金鑰（可選，從環境變數 JINA_API_KEY 讀取）
-        """
-        self.api_key = api_key or os.getenv("JINA_API_KEY")
-        if not self.api_key:
-            raise ValueError("請設定 JINA_API_KEY 環境變數或提供 API 金鑰")
-        
-        self.api_url = "https://api.jina.ai/v1/embeddings"
-        self.model = "jina-embeddings-v3"
-        self.headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
-        }
-    
-    def generate_embeddings(self, texts: List[str], task: str = "retrieval.passage") -> List[List[float]]:
-        """
-        生成文本的向量嵌入
-        
-        Args:
-            texts: 要生成嵌入的文本列表
-            task: 任務類型（retrieval.passage, retrieval.query, text-matching, classification 等）
-        
-        Returns:
-            向量嵌入列表
-        """
-        if not texts:
-            return []
-        
-        # Jina AI API v1 參數格式
-        payload = {
-            "model": self.model,
-            "input": texts,
-            "encoding_type": "float"  # 使用 float 編碼
-        }
-        
-        # jina-embeddings-v3 最大支援 1024 維度
-        if "v3" in self.model:
-            payload["dimensions"] = 1024
-        elif "v2" in self.model:
-            payload["dimensions"] = 1024
-        
-        try:
-            response = requests.post(
-                self.api_url,
-                json=payload,
-                headers=self.headers,
-                timeout=60  # 增加超時時間
-            )
-            
-            # 如果請求失敗，打印詳細錯誤信息
-            if not response.ok:
-                print(f"  ✗ API 錯誤狀態碼: {response.status_code}")
-                print(f"  ✗ 錯誤內容: {response.text}")
-                print(f"  ✗ 請求參數: {payload}")
-            
-            response.raise_for_status()
-            
-            data = response.json()
-            embeddings = [item["embedding"] for item in data["data"]]
-            
-            return embeddings
-            
-        except requests.exceptions.RequestException as e:
-            print(f"  ✗ Jina API 請求失敗: {e}")
-            raise
-        except (KeyError, ValueError) as e:
-            print(f"  ✗ 解析 Jina API 回應失敗: {e}")
-            print(f"  ✗ 回應內容: {response.text if 'response' in locals() else 'N/A'}")
-            raise
-    
-    def generate_single_embedding(self, text: str, task: str = "retrieval.passage") -> List[float]:
-        """
-        生成單一文本的向量嵌入
-        
-        Args:
-            text: 要生成嵌入的文本
-            task: 任務類型
-        
-        Returns:
-            向量嵌入
-        """
-        embeddings = self.generate_embeddings([text], task)
-        return embeddings[0] if embeddings else []
 
 
 def generate_embeddings_for_articles(
@@ -127,13 +40,17 @@ def generate_embeddings_for_articles(
     print("="*80)
     print("開始生成文章向量嵌入")
     print("="*80)
+    logger.info("開始生成文章向量嵌入")
     
     # 初始化 Jina Embedding 生成器
     try:
-        generator = JinaEmbeddingGenerator()
+        generator = JinaClient()
         print(f"✓ Jina AI API 初始化成功")
+        logger.info("Jina AI 客戶端初始化成功")
     except ValueError as e:
-        print(f"✗ 錯誤: {e}")
+        error_msg = f"錯誤: {e}"
+        print(f"✗ {error_msg}")
+        logger.error(error_msg)
         return
     
     # 建立資料庫連線
@@ -158,10 +75,13 @@ def generate_embeddings_for_articles(
         total_articles = len(articles)
         
         if total_articles == 0:
-            print("\n✓ 所有文章都已有嵌入，無需處理")
+            msg = "所有文章都已有嵌入，無需處理"
+            print(f"\n✓ {msg}")
+            logger.info(msg)
             return
         
         print(f"找到 {total_articles} 篇需要處理的文章")
+        logger.info(f"找到 {total_articles} 篇需要處理的文章")
         print(f"批次大小: {batch_size}")
         print("="*80)
         
@@ -206,20 +126,28 @@ def generate_embeddings_for_articles(
             if titles:
                 try:
                     print(f"  生成 {len(titles)} 個標題嵌入...")
-                    title_embeddings = generator.generate_embeddings(titles)
+                    logger.debug(f"生成 {len(titles)} 個標題嵌入")
+                    title_embeddings = generator.generate_embeddings(titles, task="text-matching")
                     print(f"  ✓ 標題嵌入生成成功")
+                    logger.info(f"標題嵌入生成成功: {len(title_embeddings)} 個")
                 except Exception as e:
-                    print(f"  ✗ 標題嵌入生成失敗: {e}")
+                    error_msg = f"標題嵌入生成失敗: {e}"
+                    print(f"  ✗ {error_msg}")
+                    logger.error(error_msg, exc_info=True)
             
             # 生成摘要嵌入
             summary_embeddings = []
             if summaries:
                 try:
                     print(f"  生成 {len(summaries)} 個摘要嵌入...")
-                    summary_embeddings = generator.generate_embeddings(summaries)
+                    logger.debug(f"生成 {len(summaries)} 個摘要嵌入")
+                    summary_embeddings = generator.generate_embeddings(summaries, task="text-matching")
                     print(f"  ✓ 摘要嵌入生成成功")
+                    logger.info(f"摘要嵌入生成成功: {len(summary_embeddings)} 個")
                 except Exception as e:
-                    print(f"  ✗ 摘要嵌入生成失敗: {e}")
+                    error_msg = f"摘要嵌入生成失敗: {e}"
+                    print(f"  ✗ {error_msg}")
+                    logger.error(error_msg, exc_info=True)
             
             # 更新資料庫
             for idx, article in enumerate(batch_articles):
@@ -246,11 +174,14 @@ def generate_embeddings_for_articles(
                         db.commit()
                         stats["success"] += 1
                         print(f"  ✓ 已更新: {article.title[:50]}...")
+                        logger.debug(f"已更新文章 {article.id}: {article.title[:50]}")
                     
                 except Exception as e:
                     db.rollback()
                     stats["failed"] += 1
-                    print(f"  ✗ 更新失敗: {article.title[:50]}... - {e}")
+                    error_msg = f"更新失敗: {article.title[:50]}... - {e}"
+                    print(f"  ✗ {error_msg}")
+                    logger.error(error_msg, exc_info=True)
         
         # 顯示統計資訊
         print("\n" + "="*80)
@@ -263,6 +194,8 @@ def generate_embeddings_for_articles(
         print(f"  標題嵌入: {stats['title_generated']}")
         print(f"  摘要嵌入: {stats['summary_generated']}")
         print("="*80)
+        
+        logger.info(f"嵌入生成完成 - 成功: {stats['success']}, 失敗: {stats['failed']}, 標題: {stats['title_generated']}, 摘要: {stats['summary_generated']}")
         
     finally:
         db.close()
