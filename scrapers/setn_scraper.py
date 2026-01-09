@@ -3,6 +3,12 @@
 使用繼承方式自訂三立新聞的爬蟲邏輯
 """
 
+import sys
+from pathlib import Path
+
+# 添加專案根目錄到 Python 路徑
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import re
 from typing import Optional
 from news_scraper import NewsScraperConfig, NewsScraper
@@ -10,6 +16,20 @@ from news_scraper import NewsScraperConfig, NewsScraper
 
 class SetnScraper(NewsScraper):
     """三立新聞專用爬蟲"""
+    
+    @classmethod
+    def get_site_name(cls) -> str:
+        """返回網站名稱"""
+        return "三立新聞"
+    
+    @classmethod
+    def get_config(cls) -> NewsScraperConfig:
+        """返回爬蟲配置"""
+        return NewsScraperConfig(
+            base_url="https://www.setn.com/ViewAll.aspx?pagegroupid=6",
+            article_tags=["#ckuse", "#Content1"],
+            page_url_format="https://www.setn.com/ViewAll.aspx?pagegroupid=6&p={page}",
+        )
     
     def extract_news_block(self, content: str) -> Optional[str]:
         """
@@ -76,19 +96,14 @@ class SetnScraper(NewsScraper):
 def main():
     """主程式 - 三立新聞政治版"""
     
-    # 配置三立新聞
-    setn_config = NewsScraperConfig(
-        base_url="https://www.setn.com/ViewAll.aspx?pagegroupid=6",
-        article_tags=["#ckuse", "#Content1"],
-        page_url_format="https://www.setn.com/ViewAll.aspx?pagegroupid=6&p={page}",
-    )
-    
-    # 使用自訂的 SetnScraper 類別
-    scraper = SetnScraper(setn_config)
+    # 使用類方法獲取配置
+    scraper = SetnScraper(SetnScraper.get_config())
     
     # 執行爬蟲
     try:
         from datetime import datetime
+        from database.operations import save_scraper_results_to_db
+        
         result = scraper.scrape_news(
             target_date=datetime.now(),
             num_pages=1,
@@ -100,6 +115,13 @@ def main():
             print(f"\n爬取完成！")
             print(f"找到 {len(result.get('articles', []))} 篇文章")
             print(f"結果已儲存至: setn_result.json")
+            
+            # 儲存到資料庫
+            stats = save_scraper_results_to_db(
+                result=result,
+                source_site=SetnScraper.get_site_name()
+            )
+            print(f"\n資料庫儲存完成：新增 {stats['inserted']} 篇，更新 {stats['updated']} 篇")
         else:
             print(f"\n爬取失敗：未取得結果")
         
