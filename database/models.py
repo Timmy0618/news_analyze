@@ -30,10 +30,10 @@ class NewsArticle(Base):
     source_site = Column(String(50), comment='來源網站（如：TVBS、三立、中時）')
     
     # 向量欄位（用於語義搜索）
-    # 1536 維度適用於 OpenAI text-embedding-3-small
+    # 1024 維度適用於 Jina AI jina-embeddings-v3
     # 可根據使用的模型調整維度
-    title_embedding = Column(Vector(1536), comment='標題向量')
-    summary_embedding = Column(Vector(1536), comment='大綱向量')
+    title_embedding = Column(Vector(1024), comment='標題向量')
+    summary_embedding = Column(Vector(1024), comment='大綱向量')
     
     # 系統欄位
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment='建立時間')
