@@ -23,7 +23,6 @@ class NewsArticle(Base):
     title = Column(String(500), nullable=False, comment='新聞標題')
     reporter = Column(String(100), comment='記者')
     summary = Column(Text, comment='新聞大綱')
-    content = Column(Text, comment='完整內容（選填）')
     
     # 日期和來源
     publish_date = Column(String(20), nullable=False, comment='發布日期 (YYYY/MM/DD)')
@@ -65,7 +64,6 @@ class NewsArticle(Base):
             'title': self.title,
             'reporter': self.reporter,
             'summary': self.summary,
-            'content': self.content,
             'publish_date': self.publish_date,
             'source_url': self.source_url,
             'source_site': self.source_site,

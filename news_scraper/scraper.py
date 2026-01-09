@@ -43,7 +43,7 @@ class NewsScraper:
         config: NewsScraperConfig,
         firecrawl_url: str = "http://localhost:3002",
         llm_url: str = "http://localhost:8000/v1",
-        model_name: str = "Qwen/Qwen2.5-3B-Instruct-GPTQ-Int4",
+        model_name: str = "Qwen/Qwen3-4B-Instruct-2507",
     ):
         """
         初始化爬蟲
