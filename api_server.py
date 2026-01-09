@@ -4,7 +4,7 @@ FastAPI 向量查詢服務
 """
 
 from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Literal
 from datetime import date, datetime
 import httpx
@@ -154,9 +154,8 @@ class ArticleResult(BaseModel):
     source: str
     publish_date: date
     similarity: float = Field(..., description="相似度分數 (0-1)")
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SearchResponse(BaseModel):
@@ -165,29 +164,6 @@ class SearchResponse(BaseModel):
     search_field: str
     total: int
     results: List[ArticleResult]
-
-
-async def generate_embedding(text: str) -> List[float]:
-    """
-    使用 Jina AI API 生成文字向量
-    
-    Args:
-        text: 要轉換的文字
-        
-    Returns:
-        1024 維度的向量
-    """
-    try:
-        logger.debug(f"生成查詢向量: {text[:50]}...")
-        embedding = await jina_generate_embedding(text)
-        logger.debug(f"向量生成成功，維度: {len(embedding)}")
-        return embedding
-    except Exception as e:
-        logger.error(f"生成查詢向量失敗: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"生成查詢向量失敗: {str(e)}"
-        )
 
 
 @app.get("/")
@@ -236,7 +212,7 @@ async def search_articles(request: SearchRequest):
     
     # 生成查詢向量
     try:
-        query_embedding = await generate_embedding(request.query)
+        query_embedding = await jina_generate_embedding(request.query)
     except Exception as e:
         logger.error(f"生成查詢向量失敗: {str(e)}", exc_info=True)
         raise HTTPException(
