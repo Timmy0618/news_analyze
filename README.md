@@ -143,7 +143,7 @@ uv run python scripts/run_all_scrapers.py \
 ## 📁 專案結構
 
 ```
-f:\ollama\
+.
 ├── api_server.py              # FastAPI 服務器
 ├── streamlit_app.py           # Streamlit 網頁應用程式
 ├── run_streamlit.py           # Streamlit 啟動腳本
