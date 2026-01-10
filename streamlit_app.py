@@ -8,11 +8,12 @@ from datetime import date, datetime
 from typing import List, Dict, Optional
 import sys
 import os
+import pandas as pd
 
 # 添加專案根目錄到 Python 路徑
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from database.operations import search_articles_vector, search_articles_keyword
+from database.operations import search_articles_vector, search_articles_keyword, get_articles_by_date, get_articles_by_source
 from database.config import get_db
 from database.models import NewsArticle
 from sqlalchemy import func
@@ -22,6 +23,24 @@ class NewsSearchApp:
 
     def __init__(self):
         pass
+
+    def format_articles_for_table(self, articles: List[Dict], show_similarity: bool = False) -> pd.DataFrame:
+        """將文章列表格式化為表格顯示"""
+        data = []
+        for article in articles:
+            row = {
+                "標題": article["title"],
+                "來源": article["source"],
+                "發布日期": str(article["publish_date"]),
+                "記者": article.get("reporter", ""),
+                "摘要": article.get("summary", ""),
+                "連結": article["url"]
+            }
+            if show_similarity:
+                row["相關度"] = f"{article['similarity']*100:.1f}%" if article.get("similarity") else "N/A"
+            data.append(row)
+        
+        return pd.DataFrame(data)
 
     def search_articles(self, query: str, search_field: str = "both",
                        top_k: int = 10, source: Optional[str] = None,
@@ -73,15 +92,87 @@ class NewsSearchApp:
                     "error": f"搜尋失敗: {str(e2)}"
                 }
 
-    def get_sources(self) -> List[str]:
-        """獲取所有新聞來源"""
+    def get_articles_browse(self, source: Optional[str] = None,
+                           date_from: Optional[date] = None,
+                           date_to: Optional[date] = None,
+                           limit: int = 50,
+                           sort_by: str = "date_desc",
+                           offset: int = 0) -> List[Dict]:
+        """獲取文章列表用於瀏覽"""
         try:
             db = next(get_db())
-            sources = db.query(NewsArticle.source_site).distinct().all()
+            
+            query = db.query(NewsArticle)
+            
+            # 添加過濾條件
+            if source:
+                query = query.filter(NewsArticle.source_site == source)
+            
+            if date_from:
+                query = query.filter(NewsArticle.publish_date >= date_from)
+            
+            if date_to:
+                query = query.filter(NewsArticle.publish_date <= date_to)
+            
+            # 排序
+            if sort_by == "date_desc":
+                query = query.order_by(NewsArticle.publish_date.desc())
+            elif sort_by == "date_asc":
+                query = query.order_by(NewsArticle.publish_date.asc())
+            elif sort_by == "title":
+                query = query.order_by(NewsArticle.title)
+            
+            # 分頁
+            articles = query.offset(offset).limit(limit).all()
             db.close()
-            return [s[0] for s in sources if s[0]]
-        except Exception:
+            
+            # 轉換為字典格式
+            results = []
+            for article in articles:
+                results.append({
+                    "id": article.id,
+                    "title": article.title,
+                    "reporter": article.reporter,
+                    "summary": article.summary,
+                    "url": article.source_url,
+                    "source": article.source_site,
+                    "publish_date": article.publish_date,
+                    "similarity": 1.0  # 瀏覽模式給予滿分相似度
+                })
+            
+            return results
+            
+        except Exception as e:
+            st.error(f"獲取文章列表失敗: {str(e)}")
             return []
+
+    def get_articles_count(self, source: Optional[str] = None,
+                          date_from: Optional[date] = None,
+                          date_to: Optional[date] = None) -> int:
+        """獲取符合條件的文章總數"""
+        try:
+            db = next(get_db())
+            
+            query = db.query(func.count(NewsArticle.id))
+            
+            # 添加過濾條件
+            if source:
+                query = query.filter(NewsArticle.source_site == source)
+            
+            if date_from:
+                query = query.filter(NewsArticle.publish_date >= date_from)
+            
+            if date_to:
+                query = query.filter(NewsArticle.publish_date <= date_to)
+            
+            count = query.scalar()
+            db.close()
+            
+            return count or 0
+            
+        except Exception as e:
+            st.error(f"獲取文章數量失敗: {str(e)}")
+            return 0
 
     def get_stats(self) -> Dict:
         """獲取資料庫統計"""
@@ -122,82 +213,165 @@ class NewsSearchApp:
                 "date_range": {"min": None, "max": None}
             }
 
+    def get_sources(self) -> List[str]:
+        """獲取所有新聞來源"""
+        try:
+            db = next(get_db())
+            sources = db.query(NewsArticle.source_site).distinct().all()
+            db.close()
+            return [s[0] for s in sources if s[0]]
+        except Exception:
+            return []
+
 def main():
     """主應用程式"""
     st.set_page_config(
-        page_title="新聞向量搜尋",
+        page_title="新聞搜尋與瀏覽系統",
         page_icon="📰",
         layout="wide"
     )
 
-    st.title("📰 新聞向量搜尋系統")
-    st.markdown("使用語義搜尋快速找到相關的新聞文章")
+    st.title("📰 新聞搜尋與瀏覽系統")
+    st.markdown("提供向量搜尋、關鍵字搜尋和文章瀏覽功能")
 
     # 初始化應用程式
     app = NewsSearchApp()
 
-    # 側邊欄 - 搜尋設定
+    # 模式選擇
+    mode = st.sidebar.radio(
+        "選擇模式",
+        ["🔍 搜尋模式", "📚 瀏覽模式"],
+        help="搜尋模式：使用向量或關鍵字搜尋；瀏覽模式：查看所有文章"
+    )
+
+    # 側邊欄 - 設定
     with st.sidebar:
-        st.header("🔍 搜尋設定")
+        if mode == "🔍 搜尋模式":
+            st.header("🔍 搜尋設定")
 
-        # 搜尋查詢
-        query = st.text_input(
-            "搜尋關鍵字",
-            placeholder="輸入要搜尋的新聞內容...",
-            help="支援自然語言搜尋，如：'台灣政治'、'中美關係'等"
-        )
-
-        # 搜尋欄位
-        search_field = st.selectbox(
-            "搜尋範圍",
-            options=["both", "title", "summary"],
-            format_func=lambda x: {
-                "both": "標題+摘要",
-                "title": "僅標題",
-                "summary": "僅摘要"
-            }[x],
-            help="選擇要在哪些欄位中進行搜尋"
-        )
-
-        # 結果數量
-        top_k = st.slider(
-            "顯示結果數量",
-            min_value=1,
-            max_value=50,
-            value=10,
-            help="最多顯示多少筆搜尋結果"
-        )
-
-        # 來源過濾
-        sources = app.get_sources()
-        source_options = ["全部"] + sources
-        selected_source_display = st.selectbox(
-            "新聞來源",
-            options=source_options,
-            help="選擇特定的新聞來源"
-        )
-        selected_source = None if selected_source_display == "全部" else selected_source_display
-
-        # 日期範圍
-        st.subheader("📅 日期範圍")
-        col1, col2 = st.columns(2)
-
-        with col1:
-            date_from = st.date_input(
-                "開始日期",
-                value=None,
-                help="限制搜尋的開始日期"
+            # 搜尋類型
+            search_type = st.selectbox(
+                "搜尋類型",
+                options=["vector", "keyword"],
+                format_func=lambda x: {
+                    "vector": "向量語義搜尋",
+                    "keyword": "關鍵字搜尋"
+                }[x],
+                help="向量搜尋理解語意，關鍵字搜尋精確匹配"
             )
 
-        with col2:
-            date_to = st.date_input(
-                "結束日期",
-                value=None,
-                help="限制搜尋的結束日期"
+            # 搜尋查詢
+            query = st.text_input(
+                "搜尋關鍵字",
+                placeholder="輸入要搜尋的新聞內容...",
+                help="支援自然語言搜尋，如：'台灣政治'、'中美關係'等"
             )
 
-        # 搜尋按鈕
-        search_button = st.button("🔍 開始搜尋", type="primary", use_container_width=True)
+            # 搜尋欄位
+            search_field = st.selectbox(
+                "搜尋範圍",
+                options=["both", "title", "summary"],
+                format_func=lambda x: {
+                    "both": "標題+摘要",
+                    "title": "僅標題",
+                    "summary": "僅摘要"
+                }[x],
+                help="選擇要在哪些欄位中進行搜尋"
+            )
+
+            # 結果數量
+            top_k = st.slider(
+                "顯示結果數量",
+                min_value=1,
+                max_value=50,
+                value=10,
+                help="最多顯示多少筆搜尋結果"
+            )
+
+            # 來源過濾
+            sources = app.get_sources()
+            source_options = ["全部"] + sources
+            selected_source_display = st.selectbox(
+                "新聞來源",
+                options=source_options,
+                help="選擇特定的新聞來源"
+            )
+            selected_source = None if selected_source_display == "全部" else selected_source_display
+
+            # 日期範圍
+            st.subheader("📅 日期範圍")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                date_from = st.date_input(
+                    "開始日期",
+                    value=None,
+                    help="限制搜尋的開始日期"
+                )
+
+            with col2:
+                date_to = st.date_input(
+                    "結束日期",
+                    value=None,
+                    help="限制搜尋的結束日期"
+                )
+
+            # 搜尋按鈕
+            search_button = st.button("🔍 開始搜尋", type="primary", width='stretch')
+
+        else:  # 瀏覽模式
+            st.header("📚 瀏覽設定")
+
+            # 來源過濾
+            sources = app.get_sources()
+            source_options = ["全部"] + sources
+            selected_source_display = st.selectbox(
+                "新聞來源",
+                options=source_options,
+                help="選擇特定的新聞來源"
+            )
+            selected_source = None if selected_source_display == "全部" else selected_source_display
+
+            # 日期範圍
+            st.subheader("📅 日期範圍")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                date_from = st.date_input(
+                    "開始日期",
+                    value=None,
+                    help="限制瀏覽的開始日期"
+                )
+
+            with col2:
+                date_to = st.date_input(
+                    "結束日期",
+                    value=None,
+                    help="限制瀏覽的結束日期"
+                )
+
+            # 排序方式
+            sort_by = st.selectbox(
+                "排序方式",
+                options=["date_desc", "date_asc", "title"],
+                format_func=lambda x: {
+                    "date_desc": "日期降序（最新優先）",
+                    "date_asc": "日期升序（最舊優先）",
+                    "title": "標題字母順序"
+                }[x],
+                help="選擇文章的排序方式"
+            )
+
+            # 每頁顯示數量
+            page_size = st.selectbox(
+                "每頁顯示數量",
+                options=[10, 20, 50, 100],
+                index=2,  # 預設 50
+                help="選擇每頁顯示的文章數量"
+            )
+
+            # 瀏覽按鈕
+            browse_button = st.button("📚 開始瀏覽", type="primary", width='stretch')
 
         # 統計資訊
         st.header("📊 資料庫統計")
@@ -217,91 +391,240 @@ def main():
                 st.caption(f"日期範圍: {date_range['min']} ~ {date_range['max']}")
 
     # 主內容區域
-    if search_button and query.strip():
-        with st.spinner("🔍 正在搜尋相關新聞..."):
-            results = app.search_articles(
-                query=query.strip(),
-                search_field=search_field,
-                top_k=top_k,
+    if mode == "🔍 搜尋模式":
+        if search_button and query.strip():
+            with st.spinner("🔍 正在搜尋相關新聞..."):
+                if search_type == "vector":
+                    results = app.search_articles(
+                        query=query.strip(),
+                        search_field=search_field,
+                        top_k=top_k,
+                        source=selected_source,
+                        date_from=date_from if date_from else None,
+                        date_to=date_to if date_to else None
+                    )
+                else:  # keyword search
+                    try:
+                        results = {
+                            "query": query.strip(),
+                            "search_field": search_field,
+                            "total": 0,
+                            "results": search_articles_keyword(
+                                query=query.strip(),
+                                search_field=search_field,
+                                top_k=top_k,
+                                source=selected_source,
+                                date_from=date_from if date_from else None,
+                                date_to=date_to if date_to else None
+                            )
+                        }
+                        results["total"] = len(results["results"])
+                    except Exception as e:
+                        results = {
+                            "query": query.strip(),
+                            "search_field": search_field,
+                            "total": 0,
+                            "results": [],
+                            "error": f"關鍵字搜尋失敗: {str(e)}"
+                        }
+
+            if results and results.get("results"):
+                # 顯示搜尋摘要
+                search_type_name = "向量語義搜尋" if search_type == "vector" else "關鍵字搜尋"
+                st.success(f"使用{search_type_name}找到 {results['total']} 筆相關新聞")
+
+                # 轉換為表格格式
+                df = app.format_articles_for_table(results["results"], show_similarity=(search_type == "vector"))
+                
+                # 顯示表格
+                st.dataframe(
+                    df,
+                    column_config={
+                        "標題": st.column_config.TextColumn("標題", width="large"),
+                        "來源": st.column_config.TextColumn("來源", width="small"),
+                        "發布日期": st.column_config.TextColumn("發布日期", width="medium"),
+                        "記者": st.column_config.TextColumn("記者", width="medium"),
+                        "摘要": st.column_config.TextColumn("摘要", width="large", max_chars=None),
+                        "連結": st.column_config.LinkColumn("連結", display_text="閱讀全文"),
+                        "相關度": st.column_config.TextColumn("相關度", width="small") if search_type == "vector" else None
+                    },
+                    hide_index=True,
+                    width='stretch'
+                )
+
+                # 顯示詳細資訊（可選）
+                with st.expander("📋 查看詳細資訊", expanded=False):
+                    st.write("點擊表格中的連結可直接閱讀全文文章")
+                    if search_type == "vector":
+                        st.write("相關度表示文章與搜尋查詢的語意相似度")
+
+            elif results:
+                st.warning("沒有找到相關的新聞文章，請嘗試調整搜尋條件")
+
+            else:
+                st.error("搜尋失敗，請檢查 API 服務是否正常運行")
+
+        elif search_button and not query.strip():
+            st.warning("請輸入搜尋關鍵字")
+
+        else:
+            # 搜尋模式歡迎頁面
+            st.info("👋 請在左側輸入搜尋條件，開始探索新聞資料庫")
+
+    else:  # 瀏覽模式
+        # 初始化 session state 用於分頁
+        if 'browse_page' not in st.session_state:
+            st.session_state.browse_page = 1
+        if 'browse_filters' not in st.session_state:
+            st.session_state.browse_filters = {}
+        if 'show_browse_results' not in st.session_state:
+            st.session_state.show_browse_results = False
+
+        # 檢查篩選條件是否改變
+        current_filters = {
+            'source': selected_source,
+            'date_from': date_from,
+            'date_to': date_to,
+            'sort_by': sort_by,
+            'page_size': page_size
+        }
+        
+        if current_filters != st.session_state.browse_filters:
+            st.session_state.browse_page = 1
+            st.session_state.browse_filters = current_filters
+
+        # 當點擊瀏覽按鈕時，啟用顯示
+        if browse_button:
+            st.session_state.show_browse_results = True
+
+        if st.session_state.show_browse_results:
+            # 獲取總數量
+            total_count = app.get_articles_count(
                 source=selected_source,
                 date_from=date_from if date_from else None,
                 date_to=date_to if date_to else None
             )
+            
+            # 計算分頁資訊
+            total_pages = (total_count + page_size - 1) // page_size
+            current_page = st.session_state.browse_page
+            
+            # 確保當前頁數有效
+            if current_page > total_pages and total_pages > 0:
+                current_page = total_pages
+                st.session_state.browse_page = current_page
+            
+            # 載入當前頁的文章
+            offset = (current_page - 1) * page_size
+            articles = app.get_articles_browse(
+                source=selected_source,
+                date_from=date_from if date_from else None,
+                date_to=date_to if date_to else None,
+                limit=page_size,
+                sort_by=sort_by,
+                offset=offset
+            )
 
-        if results and results.get("results"):
-            # 顯示搜尋摘要
-            st.success(f"找到 {results['total']} 筆相關新聞")
+            if articles:
+                st.success(f"載入 {len(articles)} 篇文章 (第 {current_page} 頁，共 {total_pages} 頁，總共 {total_count} 篇)")
 
-            # 顯示搜尋結果
-            for i, article in enumerate(results["results"], 1):
-                with st.container():
-                    # 文章標題和來源
-                    col1, col2, col3 = st.columns([3, 1, 1])
+                # 轉換為表格格式
+                df = app.format_articles_for_table(articles, show_similarity=False)
+                
+                # 顯示表格
+                st.dataframe(
+                    df,
+                    column_config={
+                        "標題": st.column_config.TextColumn("標題", width="large"),
+                        "來源": st.column_config.TextColumn("來源", width="small"),
+                        "發布日期": st.column_config.TextColumn("發布日期", width="medium"),
+                        "記者": st.column_config.TextColumn("記者", width="medium"),
+                        "摘要": st.column_config.TextColumn("摘要", width="large", max_chars=None),
+                        "連結": st.column_config.LinkColumn("連結", display_text="閱讀全文")
+                    },
+                    hide_index=True,
+                    width='stretch'
+                )
 
-                    with col1:
-                        st.subheader(f"{i}. {article['title']}")
+                # 分頁控制（底部）
+                st.markdown("---")
+                col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
+                
+                with col1:
+                    if st.button("⏮️ 第一頁", disabled=(current_page == 1), width='stretch'):
+                        st.session_state.browse_page = 1
+                        st.rerun()
+                
+                with col2:
+                    if st.button("⬅️ 上一頁", disabled=(current_page == 1), width='stretch'):
+                        st.session_state.browse_page -= 1
+                        st.rerun()
+                
+                with col3:
+                    st.markdown(f"<center><strong>第 {current_page} 頁 / 共 {total_pages} 頁</strong></center>", unsafe_allow_html=True)
+                
+                with col4:
+                    if st.button("下一頁 ➡️", disabled=(current_page == total_pages), width='stretch'):
+                        st.session_state.browse_page += 1
+                        st.rerun()
+                
+                with col5:
+                    if st.button("最後頁 ⏭️", disabled=(current_page == total_pages), width='stretch'):
+                        st.session_state.browse_page = total_pages
+                        st.rerun()
 
-                    with col2:
-                        st.caption(f"來源: {article['source']}")
-
-                    with col3:
-                        similarity_pct = f"{article['similarity']*100:.1f}%"
-                        st.caption(f"相關度: {similarity_pct}")
-
-                    # 發布日期
-                    st.caption(f"📅 發布日期: {article['publish_date']}")
-
-                    # 記者資訊
-                    if article.get('reporter'):
-                        st.caption(f"👤 記者: {article['reporter']}")
-
-                    # 摘要
-                    if article.get('summary'):
-                        with st.expander("📝 查看摘要", expanded=False):
-                            st.write(article['summary'])
-
-                    # 文章連結
-                    st.markdown(f"[🔗 閱讀全文]({article['url']})")
-
-                    # 分隔線
-                    st.divider()
-
-        elif results:
-            st.warning("沒有找到相關的新聞文章，請嘗試調整搜尋條件")
+            else:
+                st.warning("沒有找到符合條件的文章")
 
         else:
-            st.error("搜尋失敗，請檢查 API 服務是否正常運行")
-
-    elif search_button and not query.strip():
-        st.warning("請輸入搜尋關鍵字")
-
-    else:
-        # 歡迎頁面
-        st.info("👋 請在左側輸入搜尋條件，開始探索新聞資料庫")
+            # 瀏覽模式歡迎頁面
+            st.info("👋 請在左側設定瀏覽條件，查看新聞文章列表")
 
         # 功能介紹
         st.header("✨ 功能特色")
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            st.subheader("🔍 語義搜尋")
-            st.write("使用向量相似度進行智慧搜尋，不僅匹配關鍵字，還理解語意")
+            st.subheader("🔍 向量語義搜尋")
+            st.write("使用向量相似度進行智慧搜尋，理解語意而非僅匹配關鍵字")
 
         with col2:
+            st.subheader("🔎 關鍵字搜尋")
+            st.write("傳統的精確關鍵字匹配搜尋，適合查找特定詞彙")
+
+        with col3:
+            st.subheader("📚 文章瀏覽")
+            st.write("瀏覽所有文章，按日期或標題排序，方便隨機瀏覽")
+
+        col4, col5, col6 = st.columns(3)
+
+        with col4:
             st.subheader("📊 多元篩選")
             st.write("支援來源、日期範圍等多重篩選條件")
 
-        with col3:
-            st.subheader("📈 相關度排序")
-            st.write("結果按相關度排序，幫助您快速找到最相關的內容")
+        with col5:
+            st.subheader("📈 智慧排序")
+            st.write("搜尋結果按相關度排序，瀏覽按指定順序排列")
+
+        with col6:
+            st.subheader("🔄 即時載入")
+            st.write("快速載入和顯示結果，提供流暢的使用體驗")
 
         # 使用說明
         st.header("📖 使用說明")
         st.markdown("""
-        1. **輸入關鍵字**: 在搜尋框中輸入您想找的新聞主題
-        2. **選擇範圍**: 決定要在標題、摘要還是兩者中搜尋
-        3. **設定條件**: 可選的來源和日期篩選
-        4. **查看結果**: 系統會顯示最相關的新聞，按相似度排序
+        ### 搜尋模式
+        1. **選擇搜尋類型**: 向量搜尋（理解語意）或關鍵字搜尋（精確匹配）
+        2. **輸入關鍵字**: 在搜尋框中輸入您想找的新聞主題
+        3. **選擇範圍**: 決定要在標題、摘要還是兩者中搜尋
+        4. **設定條件**: 可選的來源和日期篩選
+        5. **查看結果**: 系統會顯示最相關的新聞，按相似度排序
+
+        ### 瀏覽模式
+        1. **設定篩選**: 選擇新聞來源和日期範圍
+        2. **選擇排序**: 按日期或標題排序
+        3. **設定數量**: 決定要顯示多少篇文章
+        4. **瀏覽文章**: 查看文章列表，展開摘要，點擊連結閱讀全文
         """)
 
 if __name__ == "__main__":
