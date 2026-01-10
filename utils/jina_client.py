@@ -259,3 +259,28 @@ async def generate_embedding(text: str, task: str = "text-matching") -> List[flo
     except Exception as e:
         logger.error(f"生成向量嵌入失敗: {str(e)}", exc_info=True)
         raise
+
+
+def generate_embedding_sync(text: str, task: str = "text-matching") -> List[float]:
+    """
+    同步生成單個文字的向量嵌入
+    
+    Args:
+        text: 要生成向量的文字
+        task: 任務類型
+    
+    Returns:
+        向量嵌入列表
+    """
+    import asyncio
+    
+    try:
+        # 在新的事件循環中運行異步函數
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(generate_embedding(text, task))
+        loop.close()
+        return result
+    except Exception as e:
+        logger.error(f"同步生成向量嵌入失敗: {str(e)}", exc_info=True)
+        raise

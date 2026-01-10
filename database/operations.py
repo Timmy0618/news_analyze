@@ -43,8 +43,8 @@ def save_scraper_results_to_db(
         {
             "total": 總文章數,
             "inserted": 成功新增數,
-            "updated": 更新數,
-            "skipped": 跳過數（已存在且未更新）,
+            "updated": 0（總是 0）,
+            "skipped": 0（總是 0）,
             "failed": 失敗數
         }
     
@@ -91,6 +91,9 @@ def save_scraper_results_to_db(
     try:
         print(f"\n開始儲存 {stats['total']} 篇新聞到資料庫...")
         
+        # 收集有效的文章數據
+        valid_articles = []
+        
         for idx, article in enumerate(articles, 1):
             try:
                 # 提取文章資訊（支援中文和英文欄位名）
@@ -118,57 +121,37 @@ def save_scraper_results_to_db(
                         stats["failed"] += 1
                         continue
                 
-                # 檢查是否已存在（根據 source_url）
-                existing_article = db_session.query(NewsArticle).filter_by(
-                    source_url=source_url
-                ).first()
-                
-                if existing_article:
-                    # 文章已存在，檢查是否需要更新
-                    updated = False
+                # 收集有效的文章數據
+                valid_articles.append({
+                    "title": title,
+                    "reporter": reporter if reporter else None,
+                    "summary": summary if summary else None,
+                    "publish_date": publish_date,
+                    "source_url": source_url,
+                    "source_site": source_site
+                })
                     
-                    # 更新欄位（如果新資料不為空）
-                    if title and existing_article.title != title:
-                        existing_article.title = title
-                        updated = True
-                    if reporter and existing_article.reporter != reporter:
-                        existing_article.reporter = reporter
-                        updated = True
-                    if summary and existing_article.summary != summary:
-                        existing_article.summary = summary
-                        updated = True
-                    
-                    if updated:
-                        db_session.commit()
-                        stats["updated"] += 1
-                        print(f"  ↻ 第 {idx} 篇：已更新 - {title[:40]}...")
-                    else:
-                        stats["skipped"] += 1
-                        print(f"  ⊘ 第 {idx} 篇：已跳過（無變更）- {title[:40]}...")
-                else:
-                    # 新增文章
-                    new_article = NewsArticle(
-                        title=title,
-                        reporter=reporter if reporter else None,
-                        summary=summary if summary else None,
-                        publish_date=publish_date,
-                        source_url=source_url,
-                        source_site=source_site
-                    )
-                    
-                    db_session.add(new_article)
-                    db_session.commit()
-                    stats["inserted"] += 1
-                    print(f"  ✓ 第 {idx} 篇：已新增 - {title[:40]}...")
-                    
+            except Exception as e:
+                print(f"  ✗ 第 {idx} 篇：資料處理失敗 - {str(e)[:100]}")
+                stats["failed"] += 1
+        
+        # 批量插入有效的文章
+        if valid_articles:
+            try:
+                db_session.bulk_insert_mappings(NewsArticle, valid_articles)
+                db_session.commit()
+                stats["inserted"] = len(valid_articles)
+                print(f"  ✓ 批量新增 {len(valid_articles)} 篇新聞")
             except IntegrityError as e:
                 db_session.rollback()
-                print(f"  ✗ 第 {idx} 篇：資料庫完整性錯誤 - {str(e)[:100]}")
-                stats["failed"] += 1
+                print(f"  ✗ 批量插入失敗：資料庫完整性錯誤 - {str(e)[:100]}")
+                stats["failed"] += len(valid_articles)
             except Exception as e:
                 db_session.rollback()
-                print(f"  ✗ 第 {idx} 篇：儲存失敗 - {str(e)[:100]}")
-                stats["failed"] += 1
+                print(f"  ✗ 批量插入失敗 - {str(e)[:100]}")
+                stats["failed"] += len(valid_articles)
+        else:
+            print("  ⊘ 沒有有效的文章需要插入")
         
         # 顯示統計資訊
         print("\n" + "="*60)
@@ -310,6 +293,217 @@ def get_articles_by_source(
         
         return articles
         
+    finally:
+        if should_close_session:
+            db_session.close()
+
+
+def search_articles_vector(
+    query: str,
+    search_field: str = "both",
+    top_k: int = 10,
+    source: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db_session: Optional[Session] = None
+) -> List[Dict]:
+    """
+    向量語義搜尋新聞文章
+
+    Args:
+        query: 搜尋查詢字串
+        search_field: 搜尋欄位 ("title", "summary", "both")
+        top_k: 返回結果數量
+        source: 來源網站過濾
+        date_from: 起始日期過濾
+        date_to: 結束日期過濾
+        db_session: 資料庫 session（選填）
+
+    Returns:
+        搜尋結果列表，每個項目包含文章資訊和相似度分數
+    """
+    from sqlalchemy import text
+    import numpy as np
+
+    # 這裡需要生成查詢向量 - 我們需要從外部獲取
+    # 假設我們有一個函數來生成嵌入向量
+    try:
+        from utils.jina_client import generate_embedding_sync
+        # 生成查詢向量 (同步版本)
+        query_embedding = generate_embedding_sync(query)
+    except ImportError:
+        # 如果無法匯入，則使用簡單的關鍵字搜尋作為後備
+        return search_articles_keyword(query, search_field, top_k, source, date_from, date_to, db_session)
+
+    should_close_session = False
+    if db_session is None:
+        db_session = next(get_db())
+        should_close_session = True
+
+    try:
+        # 將向量轉換為字串格式（用於 SQL）
+        query_embedding_str = str(query_embedding.tolist()) if hasattr(query_embedding, 'tolist') else str(query_embedding)
+
+        # 根據搜尋欄位選擇相似度計算方式
+        if search_field == "title":
+            similarity_expr = "1 - (title_embedding <=> CAST(:query_embedding AS vector))"
+            order_expr = "title_embedding <=> CAST(:query_embedding AS vector)"
+        elif search_field == "summary":
+            similarity_expr = "1 - (summary_embedding <=> CAST(:query_embedding AS vector))"
+            order_expr = "summary_embedding <=> CAST(:query_embedding AS vector)"
+        else:  # both
+            similarity_expr = """
+                1 - (
+                    ((title_embedding <=> CAST(:query_embedding AS vector)) +
+                     (summary_embedding <=> CAST(:query_embedding AS vector))) / 2
+                )
+            """
+            order_expr = """
+                ((title_embedding <=> CAST(:query_embedding AS vector)) +
+                 (summary_embedding <=> CAST(:query_embedding AS vector))) / 2
+            """
+
+        # 建立基礎查詢
+        query_sql = f"""
+            SELECT
+                id,
+                title,
+                reporter,
+                summary,
+                source_url as url,
+                source_site as source,
+                publish_date,
+                {similarity_expr} as similarity
+            FROM news_articles
+            WHERE title_embedding IS NOT NULL
+              AND summary_embedding IS NOT NULL
+        """
+
+        # 添加過濾條件
+        conditions = []
+        params = {"query_embedding": query_embedding_str}
+
+        if source:
+            conditions.append("source_site = :source")
+            params["source"] = source
+
+        if date_from:
+            conditions.append("publish_date >= :date_from")
+            params["date_from"] = date_from
+
+        if date_to:
+            conditions.append("publish_date <= :date_to")
+            params["date_to"] = date_to
+
+        if conditions:
+            query_sql += " AND " + " AND ".join(conditions)
+
+        # 添加排序和限制
+        query_sql += f"""
+            ORDER BY {order_expr}
+            LIMIT :limit
+        """
+        params["limit"] = top_k
+
+        # 執行查詢
+        result = db_session.execute(text(query_sql), params)
+        rows = result.fetchall()
+
+        # 轉換結果
+        articles = []
+        for row in rows:
+            articles.append({
+                "id": row.id,
+                "title": row.title,
+                "reporter": row.reporter,
+                "summary": row.summary,
+                "url": row.url,
+                "source": row.source,
+                "publish_date": row.publish_date,
+                "similarity": float(row.similarity)
+            })
+
+        return articles
+
+    finally:
+        if should_close_session:
+            db_session.close()
+
+
+def search_articles_keyword(
+    query: str,
+    search_field: str = "both",
+    top_k: int = 10,
+    source: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db_session: Optional[Session] = None
+) -> List[Dict]:
+    """
+    關鍵字搜尋新聞文章（向量搜尋的後備方案）
+
+    Args:
+        query: 搜尋查詢字串
+        search_field: 搜尋欄位 ("title", "summary", "both")
+        top_k: 返回結果數量
+        source: 來源網站過濾
+        date_from: 起始日期過濾
+        date_to: 結束日期過濾
+        db_session: 資料庫 session（選填）
+
+    Returns:
+        搜尋結果列表
+    """
+    from sqlalchemy import or_, and_
+
+    should_close_session = False
+    if db_session is None:
+        db_session = next(get_db())
+        should_close_session = True
+
+    try:
+        # 建立查詢
+        q = db_session.query(NewsArticle)
+
+        # 添加搜尋條件
+        search_conditions = []
+        if search_field in ["title", "both"]:
+            search_conditions.append(NewsArticle.title.ilike(f"%{query}%"))
+        if search_field in ["summary", "both"]:
+            search_conditions.append(NewsArticle.summary.ilike(f"%{query}%"))
+
+        if search_conditions:
+            q = q.filter(or_(*search_conditions))
+
+        # 添加過濾條件
+        if source:
+            q = q.filter(NewsArticle.source_site == source)
+
+        if date_from:
+            q = q.filter(NewsArticle.publish_date >= date_from)
+
+        if date_to:
+            q = q.filter(NewsArticle.publish_date <= date_to)
+
+        # 排序和限制
+        articles = q.order_by(NewsArticle.publish_date.desc()).limit(top_k).all()
+
+        # 轉換結果
+        results = []
+        for article in articles:
+            results.append({
+                "id": article.id,
+                "title": article.title,
+                "reporter": article.reporter,
+                "summary": article.summary,
+                "url": article.source_url,
+                "source": article.source_site,
+                "publish_date": article.publish_date,
+                "similarity": 0.5  # 關鍵字搜尋給予固定相似度
+            })
+
+        return results
+
     finally:
         if should_close_session:
             db_session.close()
