@@ -74,6 +74,26 @@ def _setup_scheduler() -> Optional[BackgroundScheduler]:
     if scrape_interval > 0:
         scrape_pages = int(os.getenv("SCRAPE_PAGES", "1"))
         scrape_max_articles = int(os.getenv("SCRAPE_MAX_ARTICLES", "15"))
+        scrape_target_date_str = os.getenv("SCRAPE_TARGET_DATE", "").strip()
+        scrape_target_date = None
+        if scrape_target_date_str:
+            try:
+                from datetime import datetime
+                # 解析為 MM-DD 格式，使用當前年份
+                current_year = datetime.now().year
+                month_day = datetime.strptime(scrape_target_date_str, '%m-%d')
+                scrape_target_date = datetime(current_year, month_day.month, month_day.day)
+                logger.info(f"使用當前年份 {current_year} 解析 SCRAPE_TARGET_DATE: {scrape_target_date_str} -> {scrape_target_date.date()}")
+            except ValueError:
+                logger.warning(f"Invalid SCRAPE_TARGET_DATE format '{scrape_target_date_str}', expected MM-DD, using current date")
+                scrape_target_date = datetime.now()
+            except Exception as e:
+                logger.warning(f"Error parsing SCRAPE_TARGET_DATE '{scrape_target_date_str}': {e}, using current date")
+                scrape_target_date = datetime.now()
+        else:
+            # 如果沒有設定，使用今天日期
+            scrape_target_date = datetime.now()
+            logger.info(f"SCRAPE_TARGET_DATE 未設定，使用今天日期: {scrape_target_date.date()}")
         scrape_no_db = os.getenv("SCRAPE_NO_DB", "false").strip().lower() in {
             "1",
             "true",
@@ -88,7 +108,7 @@ def _setup_scheduler() -> Optional[BackgroundScheduler]:
                 pages=scrape_pages,
                 max_articles=scrape_max_articles,
                 save_to_db=not scrape_no_db,
-                target_date=None,
+                target_date=scrape_target_date,
             )
             logger.info("scheduler: 初始 scrapers 執行完成")
         except Exception as e:
@@ -104,7 +124,7 @@ def _setup_scheduler() -> Optional[BackgroundScheduler]:
                 "pages": scrape_pages,
                 "max_articles": scrape_max_articles,
                 "save_to_db": not scrape_no_db,
-                "target_date": None,
+                "target_date": scrape_target_date,
             },
         )
         logger.info("scheduler: scrapers every %s minutes", scrape_interval)

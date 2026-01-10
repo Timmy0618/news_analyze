@@ -13,6 +13,55 @@ from typing import List, Dict, Optional, Tuple
 from langchain_openai import ChatOpenAI
 
 
+def filter_existing_links(links: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+    """
+    檢查資料庫中已存在的連結，並過濾掉重複的連結
+    
+    Args:
+        links: [(標題, 連結), ...] 的列表
+        
+    Returns:
+        過濾後的連結列表（不包含資料庫中已存在的）
+    """
+    if not links:
+        return links
+    
+    print(f"正在檢查資料庫中已存在的 {len(links)} 個連結...")
+    
+    try:
+        from database.config import get_db
+        from database.models import NewsArticle
+        
+        db = next(get_db())
+        existing_urls = set()
+        
+        # 批次查詢已存在的 URL，避免一次性查詢太多資料
+        batch_size = 100
+        for i in range(0, len(links), batch_size):
+            batch_links = [link for _, link in links[i:i+batch_size]]
+            existing_batch = db.query(NewsArticle.source_url).filter(
+                NewsArticle.source_url.in_(batch_links)
+            ).all()
+            existing_urls.update([url[0] for url in existing_batch])
+        
+        db.close()
+        
+        # 過濾掉已存在的連結
+        filtered_links = [(title, link) for title, link in links if link not in existing_urls]
+        removed_count = len(links) - len(filtered_links)
+        
+        print(f"✓ 資料庫檢查完成")
+        print(f"  - 原始連結數: {len(links)}")
+        print(f"  - 已存在連結數: {removed_count}")
+        print(f"  - 需處理連結數: {len(filtered_links)}")
+        
+        return filtered_links
+        
+    except Exception as e:
+        print(f"⚠ 資料庫檢查失敗: {e}，不處理")
+        return []
+
+
 class NewsScraperConfig:
     """新聞爬蟲配置類"""
     
@@ -625,14 +674,21 @@ class NewsScraper:
         
         print(f"\n總共找到 {len(unique_links)} 個新聞連結")
         
+        # 檢查資料庫中已存在的連結，避免重複處理
+        unique_links = filter_existing_links(unique_links)
+        
+        # 限制處理數量
+        unique_links = unique_links[:max_articles]
+        print(f"限制處理數量至 {len(unique_links)} 個新聞連結")
+        
         # 抓取文章內容
         print("\n" + "="*80)
         print("步驟 2: 抓取文章並提取資訊")
         print("="*80)
         
         articles_data = []
-        for i, (title, link) in enumerate(unique_links[:max_articles], 1):
-            print(f"\n處理 {i}/{min(len(unique_links), max_articles)}: {link}")
+        for i, (title, link) in enumerate(unique_links, 1):
+            print(f"\n處理 {i}/{len(unique_links)}: {link}")
             print(f"  標題: {title}")
             
             article_content = self.scrape_page(link, self.config.article_tags)

@@ -4,8 +4,13 @@
 """
 
 import sys
+import os
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
+
+# 載入環境變數
+load_dotenv()
 
 # 添加專案根目錄到 Python 路徑
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -18,23 +23,41 @@ from database.operations import save_scraper_results_to_db
 
 def run_all_scrapers(
     target_date=None,
-    num_pages=1,
-    max_articles=1,
-    save_to_db=True,
+    num_pages=None,
+    max_articles=None,
+    save_to_db=None,
     debug=False
 ):
     """
     執行所有爬蟲
     
     Args:
-        target_date: 目標日期（None 表示今天）
-        num_pages: 每個網站要抓取的分頁數量
-        max_articles: 每個網站最多處理的文章數量
-        save_to_db: 是否儲存到資料庫
+        target_date: 目標日期（None 表示從環境變數讀取）
+        num_pages: 每個網站要抓取的分頁數量（None 表示從環境變數讀取）
+        max_articles: 每個網站最多處理的文章數量（None 表示從環境變數讀取）
+        save_to_db: 是否儲存到資料庫（None 表示從環境變數讀取）
         debug: 是否啟用調試模式 (儲存中間檔案)
     """
+    # 從環境變數讀取設定，如果參數為 None
     if target_date is None:
-        target_date = datetime.now()
+        target_date_str = os.getenv('SCRAPE_TARGET_DATE', '').strip()
+        if target_date_str:
+            try:
+                target_date = datetime.strptime(target_date_str, '%Y-%m-%d')
+            except ValueError:
+                print(f"警告: 無效的 SCRAPE_TARGET_DATE 格式 '{target_date_str}'，使用今天日期")
+                target_date = datetime.now()
+        else:
+            target_date = datetime.now()
+    
+    if num_pages is None:
+        num_pages = int(os.getenv('SCRAPE_PAGES', '1'))
+    
+    if max_articles is None:
+        max_articles = int(os.getenv('SCRAPE_MAX_ARTICLES', '15'))
+    
+    if save_to_db is None:
+        save_to_db = os.getenv('SCRAPE_NO_DB', 'false').strip().lower() not in {'1', 'true', 'yes', 'on'}
     
     date_str = target_date.strftime("%Y%m%d")
     
