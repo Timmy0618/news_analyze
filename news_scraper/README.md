@@ -50,7 +50,8 @@ scraper = NewsScraper(
     config,
     firecrawl_url="http://localhost:3002",
     llm_url="http://localhost:8000/v1",  # 或設定環境變數 LLM_URL
-    model_name="Qwen/Qwen3-4B-Instruct-2507"
+    model_name="Qwen/Qwen3-4B-Instruct-2507",
+    debug=True  # 啟用調試模式，儲存中間檔案
 )
 
 # 如果不指定 llm_url，會自動從環境變數 LLM_URL 讀取

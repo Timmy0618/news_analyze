@@ -81,6 +81,19 @@ def _setup_scheduler() -> Optional[BackgroundScheduler]:
             "on",
         }
 
+        # 啟動時先執行一次
+        logger.info("scheduler: 啟動時執行 scrapers")
+        try:
+            run_scrapers(
+                pages=scrape_pages,
+                max_articles=scrape_max_articles,
+                save_to_db=not scrape_no_db,
+                target_date=None,
+            )
+            logger.info("scheduler: 初始 scrapers 執行完成")
+        except Exception as e:
+            logger.error(f"scheduler: 初始 scrapers 執行失敗: {str(e)}", exc_info=True)
+
         scheduler.add_job(
             run_scrapers,
             "interval",
@@ -108,6 +121,18 @@ def _setup_scheduler() -> Optional[BackgroundScheduler]:
             "yes",
             "on",
         }
+
+        # 啟動時先執行一次
+        logger.info("scheduler: 啟動時執行 embeddings")
+        try:
+            run_embeddings(
+                batch_size=embed_batch_size,
+                limit=embed_limit,
+                force=embed_force,
+            )
+            logger.info("scheduler: 初始 embeddings 執行完成")
+        except Exception as e:
+            logger.error(f"scheduler: 初始 embeddings 執行失敗: {str(e)}", exc_info=True)
 
         scheduler.add_job(
             run_embeddings,

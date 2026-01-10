@@ -44,6 +44,7 @@ class NewsScraper:
         firecrawl_url: str = "http://localhost:3002",
         llm_url: str = None,
         model_name: str = "Qwen/Qwen3-4B-Instruct-2507",
+        debug: bool = False,
     ):
         """
         初始化爬蟲
@@ -53,10 +54,12 @@ class NewsScraper:
             firecrawl_url: Firecrawl API 的 URL
             llm_url: LLM API 的 URL (如果為 None 則從環境變量 LLM_URL 讀取)
             model_name: 使用的模型名稱
+            debug: 是否啟用調試模式 (儲存中間檔案)
         """
         load_dotenv()
         self.config = config
         self.firecrawl_url = firecrawl_url
+        self.debug = debug
         
         # 如果沒有提供 llm_url，則從環境變量讀取
         if llm_url is None:
@@ -257,7 +260,7 @@ class NewsScraper:
 4. 確保 JSON 格式正確、完整"""
 
         # 儲存傳給 LLM 的 query（用於 debug）
-        if save_dir and page_num is not None:
+        if save_dir and page_num is not None and self.debug:
             llm_fix_input_filename = f"{save_dir}/page_{page_num}_llm_fix_input.txt"
             with open(llm_fix_input_filename, "w", encoding="utf-8") as f:
                 f.write(f"# 第 {page_num} 頁 - JSON 修正的 LLM Query\n\n")
@@ -270,7 +273,7 @@ class NewsScraper:
             fixed_text = fix_response.content.strip()
             
             # 儲存 LLM 回應以便 debug
-            if save_dir and page_num is not None:
+            if save_dir and page_num is not None and self.debug:
                 llm_fix_response_filename = f"{save_dir}/page_{page_num}_llm_fix_response.txt"
                 with open(llm_fix_response_filename, "w", encoding="utf-8") as f:
                     f.write(f"# 第 {page_num} 頁 - JSON 修正的 LLM Response\n\n")
@@ -340,7 +343,7 @@ class NewsScraper:
             content_to_parse = result
         
         # 儲存傳給 LLM 的內容（用於 debug）
-        if save_dir and page_num is not None:
+        if save_dir and page_num is not None and self.debug:
             llm_input_filename = f"{save_dir}/page_{page_num}_llm_input.txt"
             with open(llm_input_filename, "w", encoding="utf-8") as f:
                 f.write(f"# 第 {page_num} 頁 - 傳給 LLM 的清理後內容\n\n")
@@ -387,7 +390,7 @@ class NewsScraper:
 注意：只提取日期為「{target_date_short}」的新聞，連結保持原格式。找不到則回答 []"""
 
         # 儲存傳給 LLM 的 query（用於 debug）
-        if save_dir and page_num is not None:
+        if save_dir and page_num is not None and self.debug:
             llm_query_filename = f"{save_dir}/page_{page_num}_llm_query.txt"
             with open(llm_query_filename, "w", encoding="utf-8") as f:
                 f.write(f"# 第 {page_num} 頁 - 提取新聞連結的 LLM Query\n\n")
@@ -404,7 +407,7 @@ class NewsScraper:
             print(f"  LLM 回應內容: {result_text[:300]}...")
             
             # 儲存 LLM 回應以便 debug
-            if save_dir and page_num is not None:
+            if save_dir and page_num is not None and self.debug:
                 llm_response_filename = f"{save_dir}/page_{page_num}_llm_response.txt"
                 with open(llm_response_filename, "w", encoding="utf-8") as f:
                     f.write(f"# LLM 回應 - 第 {page_num} 頁\n")
@@ -503,7 +506,7 @@ class NewsScraper:
 - 重點3"""
 
         # 儲存傳給 LLM 的 query（用於 debug）
-        if save_dir and article_id:
+        if save_dir and article_id and self.debug:
             llm_input_filename = f"{save_dir}/article_{article_id}_llm_input.txt"
             with open(llm_input_filename, "w", encoding="utf-8") as f:
                 f.write(f"# 文章 {article_id} - 提取記者和大綱的 LLM Query\n\n")
@@ -517,7 +520,7 @@ class NewsScraper:
             result_text = response.content.strip()
             
             # 儲存 LLM 回應以便 debug
-            if save_dir and article_id:
+            if save_dir and article_id and self.debug:
                 llm_response_filename = f"{save_dir}/article_{article_id}_llm_response.txt"
                 with open(llm_response_filename, "w", encoding="utf-8") as f:
                     f.write(f"# 文章 {article_id} - 提取記者和大綱的 LLM Response\n\n")
@@ -573,10 +576,13 @@ class NewsScraper:
         date_str = target_date.strftime("%m/%d")
         date_str_full = target_date.strftime("%Y/%m/%d")
         
-        # 建立儲存原始資料的資料夾
+        # 建立儲存原始資料的資料夾 (只有在 debug 模式下)
         raw_data_dir = f"raw_data_{target_date.strftime('%Y%m%d')}"
-        os.makedirs(raw_data_dir, exist_ok=True)
-        print(f"✓ 原始資料將儲存至資料夾: {raw_data_dir}")
+        if self.debug:
+            os.makedirs(raw_data_dir, exist_ok=True)
+            print(f"✓ 原始資料將儲存至資料夾: {raw_data_dir}")
+        else:
+            print(f"✓ Debug 模式已關閉，不會儲存原始資料檔案")
         
         print("="*80)
         print(f"步驟 1: 抓取新聞列表 (日期: {date_str_full})")
@@ -594,8 +600,8 @@ class NewsScraper:
             raw_content = self.scrape_list_page(page_url)
             print(f"  抓取到內容長度: {len(raw_content)} 字元")
             
-            # 儲存每頁的原始內容
-            if raw_content:
+            # 儲存每頁的原始內容 (只有在 debug 模式下)
+            if raw_content and self.debug:
                 page_filename = f"{raw_data_dir}/page_{page}.md"
                 with open(page_filename, "w", encoding="utf-8") as f:
                     f.write(f"# 第 {page} 頁 - {page_url}\n\n")
@@ -631,8 +637,8 @@ class NewsScraper:
             
             article_content = self.scrape_page(link, self.config.article_tags)
             
-            # 儲存每篇文章的原始內容
-            if article_content:
+            # 儲存每篇文章的原始內容 (只有在 debug 模式下)
+            if article_content and self.debug:
                 # 從連結提取新聞 ID 作為檔案名稱
                 news_id = link.split('newsid=')[-1].split('&')[0] if 'newsid=' in link else str(i)
                 article_filename = f"{raw_data_dir}/article_{news_id}.md"
@@ -673,7 +679,10 @@ class NewsScraper:
         
         print(f"\n✓ 結果已儲存至 {output_file}")
         print(f"✓ 共處理 {len(articles_data)} 篇新聞")
-        print(f"✓ 原始資料已儲存至 {raw_data_dir} 資料夾")
-        print("  包含：每頁的原始內容、各篇文章的原始內容")
+        if self.debug:
+            print(f"✓ 原始資料已儲存至 {raw_data_dir} 資料夾")
+            print("  包含：每頁的原始內容、各篇文章的原始內容、LLM 調試檔案")
+        else:
+            print("✓ Debug 模式已關閉，原始資料檔案未儲存")
         
         return result

@@ -20,7 +20,8 @@ def run_all_scrapers(
     target_date=None,
     num_pages=1,
     max_articles=1,
-    save_to_db=True
+    save_to_db=True,
+    debug=False
 ):
     """
     執行所有爬蟲
@@ -30,6 +31,7 @@ def run_all_scrapers(
         num_pages: 每個網站要抓取的分頁數量
         max_articles: 每個網站最多處理的文章數量
         save_to_db: 是否儲存到資料庫
+        debug: 是否啟用調試模式 (儲存中間檔案)
     """
     if target_date is None:
         target_date = datetime.now()
@@ -78,7 +80,7 @@ def run_all_scrapers(
         
         try:
             # 初始化爬蟲（使用類別自己的配置）
-            scraper = scraper_class(config)
+            scraper = scraper_class(config, debug=debug)
             
             # 執行爬蟲
             result = scraper.scrape_news(
@@ -153,6 +155,7 @@ def main():
     parser.add_argument('--max-articles', type=int, default=15, help='每個網站最多處理的文章數（預設: 15）')
     parser.add_argument('--no-db', action='store_true', help='不儲存到資料庫（只儲存 JSON）')
     parser.add_argument('--date', type=str, help='目標日期 (格式: YYYY-MM-DD)，預設為今天')
+    parser.add_argument('--debug', action='store_true', help='啟用調試模式，儲存中間檔案')
     
     args = parser.parse_args()
     
@@ -172,7 +175,8 @@ def main():
         target_date=target_date,
         num_pages=args.pages,
         max_articles=args.max_articles,
-        save_to_db=not args.no_db
+        save_to_db=not args.no_db,
+        debug=args.debug
     )
 
 
