@@ -13,7 +13,7 @@ import pandas as pd
 # 添加專案根目錄到 Python 路徑
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from database.operations import search_articles_vector, search_articles_keyword, get_articles_by_date, get_articles_by_source
+from database.operations import search_articles_vector, search_articles_keyword, get_articles_by_date, get_articles_by_source, get_topic_statistics
 from database.config import get_db
 from database.models import NewsArticle
 from sqlalchemy import func
@@ -223,6 +223,22 @@ class NewsSearchApp:
         except Exception:
             return []
 
+    def get_topic_statistics(self, analysis_date: Optional[date] = None, limit: int = 10) -> List[Dict]:
+        """獲取主題統計資料"""
+        try:
+            from database.operations import get_topic_statistics
+            statistics = get_topic_statistics(analysis_date=analysis_date, limit=limit)
+            
+            # 轉換為字典格式
+            results = []
+            for stat in statistics:
+                results.append(stat.to_dict())
+            
+            return results
+        except Exception as e:
+            st.error(f"獲取主題統計失敗: {str(e)}")
+            return []
+
 def main():
     """主應用程式"""
     st.set_page_config(
@@ -240,8 +256,8 @@ def main():
     # 模式選擇
     mode = st.sidebar.radio(
         "選擇模式",
-        ["🔍 搜尋模式", "📚 瀏覽模式"],
-        help="搜尋模式：使用向量或關鍵字搜尋；瀏覽模式：查看所有文章"
+        ["📈 主題統計", "🔍 搜尋模式", "📚 瀏覽模式"],
+        help="搜尋模式：使用向量或關鍵字搜尋；瀏覽模式：查看所有文章；主題統計：查看新聞主題分析結果"
     )
 
     # 側邊欄 - 設定
@@ -319,6 +335,32 @@ def main():
             # 搜尋按鈕
             search_button = st.button("🔍 開始搜尋", type="primary", width='stretch')
 
+            # 初始化其他模式變數
+            load_stats_button = False
+            browse_button = False
+
+        elif mode == "📈 主題統計":
+            st.header("📈 主題統計設定")
+
+            # 日期選擇
+            selected_date = st.date_input(
+                "選擇分析日期",
+                value=date.today(),
+                help="選擇要查看主題統計的日期"
+            )
+
+            # 初始化其他變數以避免UnboundLocalError
+            selected_source = None
+            date_from = None
+            date_to = None
+            sort_by = "date_desc"
+            page_size = 50
+            browse_button = False
+            search_button = False
+
+            # 載入按鈕
+            load_stats_button = st.button("📊 載入統計", type="primary", width='stretch')
+
         else:  # 瀏覽模式
             st.header("📚 瀏覽設定")
 
@@ -372,6 +414,10 @@ def main():
 
             # 瀏覽按鈕
             browse_button = st.button("📚 開始瀏覽", type="primary", width='stretch')
+
+            # 初始化其他模式變數
+            search_button = False
+            load_stats_button = False
 
         # 統計資訊
         st.header("📊 資料庫統計")
@@ -576,13 +622,70 @@ def main():
             else:
                 st.warning("沒有找到符合條件的文章")
 
+        elif mode == "📈 主題統計":
+            if load_stats_button:
+                with st.spinner("📊 正在載入主題統計..."):
+                    statistics = app.get_topic_statistics(analysis_date=selected_date)
+                    
+                    if statistics:
+                        stat = statistics[0]  # 應該只有一筆該日期的統計
+                        
+                        # 顯示統計摘要
+                        st.success(f"找到 {selected_date} 的主題統計資料")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("總文章數", stat["total_articles"])
+                        with col2:
+                            st.metric("主題數量", len(stat["topics_data"].get("topics", [])))
+                        
+                        # 顯示主題列表
+                        topics = stat["topics_data"].get("topics", [])
+                        if topics:
+                            st.subheader("🏷️ 熱門主題排行")
+                            
+                            # 轉換為表格格式
+                            topics_data = []
+                            for topic in topics:
+                                topics_data.append({
+                                    "排名": f"#{topic['rank']}",
+                                    "主題名稱": topic['name'],
+                                    "描述": topic['description'],
+                                    "相關文章數": f"{topic['article_count']}篇"
+                                })
+                            
+                            topics_df = pd.DataFrame(topics_data)
+                            
+                            # 顯示表格
+                            st.dataframe(
+                                topics_df,
+                                column_config={
+                                    "排名": st.column_config.TextColumn("排名", width="small"),
+                                    "主題名稱": st.column_config.TextColumn("主題名稱", width="large"),
+                                    "描述": st.column_config.TextColumn("描述", width="large"),
+                                    "相關文章數": st.column_config.TextColumn("相關文章數", width="medium")
+                                },
+                                hide_index=True,
+                                width='stretch'
+                            )
+                        else:
+                            st.warning("該日期沒有主題分析資料")
+                    else:
+                        st.warning(f"沒有找到 {selected_date} 的主題統計資料")
+                        
+                        # 提供執行分析的建議
+                        st.info("💡 提示：您可以使用命令列工具執行分析：")
+                        st.code(f"python analyze_news_topics.py {selected_date}")
+            else:
+                st.info("👋 請選擇日期並點擊「載入統計」來查看主題分析結果")
+
         else:
-            # 瀏覽模式歡迎頁面
-            st.info("👋 請在左側設定瀏覽條件，查看新聞文章列表")
+            # 搜尋模式歡迎頁面
+            st.info("👋 請在左側輸入搜尋條件，開始尋找相關新聞")
 
         # 功能介紹
         st.header("✨ 功能特色")
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             st.subheader("🔍 向量語義搜尋")
@@ -596,19 +699,9 @@ def main():
             st.subheader("📚 文章瀏覽")
             st.write("瀏覽所有文章，按日期或標題排序，方便隨機瀏覽")
 
-        col4, col5, col6 = st.columns(3)
-
         with col4:
-            st.subheader("📊 多元篩選")
-            st.write("支援來源、日期範圍等多重篩選條件")
-
-        with col5:
-            st.subheader("📈 智慧排序")
-            st.write("搜尋結果按相關度排序，瀏覽按指定順序排列")
-
-        with col6:
-            st.subheader("🔄 即時載入")
-            st.write("快速載入和顯示結果，提供流暢的使用體驗")
+            st.subheader("📈 主題統計")
+            st.write("查看每日新聞主題分析，了解熱門討論話題")
 
         # 使用說明
         st.header("📖 使用說明")
@@ -625,6 +718,12 @@ def main():
         2. **選擇排序**: 按日期或標題排序
         3. **設定數量**: 決定要顯示多少篇文章
         4. **瀏覽文章**: 查看文章列表，展開摘要，點擊連結閱讀全文
+
+        ### 主題統計模式
+        1. **選擇日期**: 選擇要查看主題統計的日期
+        2. **載入統計**: 點擊按鈕載入該日期的主題分析結果
+        3. **查看主題**: 瀏覽熱門主題排行和相關描述
+        4. **執行分析**: 如果沒有資料，可以使用命令列工具生成分析
         """)
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 支援 pgvector 向量搜尋
 """
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, Date, Index
+from sqlalchemy import Column, Integer, String, Text, DateTime, Date, Index, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 from pgvector.sqlalchemy import Vector
@@ -67,6 +67,45 @@ class NewsArticle(Base):
             'publish_date': self.publish_date.isoformat() if self.publish_date else None,
             'source_url': self.source_url,
             'source_site': self.source_site,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class NewsTopicStatistics(Base):
+    """新聞主題統計模型"""
+    
+    __tablename__ = 'news_topic_statistics'
+    
+    # 主鍵
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # 分析日期（每天一筆統計）
+    analysis_date = Column(Date, nullable=False, unique=True, comment='分析日期')
+    
+    # 統計數據
+    total_articles = Column(Integer, nullable=False, comment='總文章數')
+    topics_data = Column(JSON, nullable=False, comment='主題分析數據')
+    
+    # 系統欄位
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), comment='建立時間')
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), comment='更新時間')
+    
+    # 索引
+    __table_args__ = (
+        Index('idx_analysis_date', 'analysis_date'),
+    )
+    
+    def __repr__(self):
+        return f"<NewsTopicStatistics(id={self.id}, date={self.analysis_date}, total_articles={self.total_articles})>"
+    
+    def to_dict(self):
+        """轉換為字典格式"""
+        return {
+            'id': self.id,
+            'analysis_date': self.analysis_date.isoformat() if self.analysis_date else None,
+            'total_articles': self.total_articles,
+            'topics_data': self.topics_data,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }

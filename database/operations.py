@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, date
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from database.models import NewsArticle
+from database.models import NewsArticle, NewsTopicStatistics
 from database.config import get_db
 
 
@@ -503,6 +503,144 @@ def search_articles_keyword(
             })
 
         return results
+
+    finally:
+        if should_close_session:
+            db_session.close()
+
+
+def save_topic_statistics(
+    analysis_date: date,
+    total_articles: int,
+    topics_data: dict,
+    db_session: Optional[Session] = None
+) -> bool:
+    """
+    儲存新聞主題統計資料
+
+    Args:
+        analysis_date: 分析日期
+        total_articles: 總文章數
+        topics_data: 主題分析數據（JSON格式）
+        db_session: 資料庫 session（選填）
+
+    Returns:
+        是否成功儲存
+
+    Example:
+        ```python
+        from datetime import date
+        from database.operations import save_topic_statistics
+
+        topics_data = {
+            "topics": [
+                {"rank": 1, "name": "政治", "description": "政治相關新聞", "article_count": 15},
+                {"rank": 2, "name": "經濟", "description": "經濟相關新聞", "article_count": 10}
+            ]
+        }
+
+        success = save_topic_statistics(
+            analysis_date=date(2026, 1, 10),
+            total_articles=25,
+            topics_data=topics_data
+        )
+        ```
+    """
+    from database.models import NewsTopicStatistics
+    from sqlalchemy.exc import IntegrityError
+
+    should_close_session = False
+    if db_session is None:
+        db_session = next(get_db())
+        should_close_session = True
+
+    try:
+        # 檢查是否已存在該日期的統計資料
+        existing = db_session.query(NewsTopicStatistics).filter_by(
+            analysis_date=analysis_date
+        ).first()
+
+        if existing:
+            # 更新現有資料
+            existing.total_articles = total_articles
+            existing.topics_data = topics_data
+            db_session.commit()
+            print(f"✓ 更新 {analysis_date} 的主題統計資料")
+        else:
+            # 建立新資料
+            statistics = NewsTopicStatistics(
+                analysis_date=analysis_date,
+                total_articles=total_articles,
+                topics_data=topics_data
+            )
+            db_session.add(statistics)
+            db_session.commit()
+            print(f"✓ 新增 {analysis_date} 的主題統計資料")
+
+        return True
+
+    except IntegrityError as e:
+        db_session.rollback()
+        print(f"✗ 儲存主題統計失敗：資料庫完整性錯誤 - {str(e)}")
+        return False
+    except Exception as e:
+        db_session.rollback()
+        print(f"✗ 儲存主題統計失敗 - {str(e)}")
+        return False
+    finally:
+        if should_close_session:
+            db_session.close()
+
+
+def get_topic_statistics(
+    analysis_date: Optional[date] = None,
+    limit: int = 10,
+    db_session: Optional[Session] = None
+) -> List[NewsTopicStatistics]:
+    """
+    查詢主題統計資料
+
+    Args:
+        analysis_date: 指定分析日期（選填，不提供則返回所有）
+        limit: 最多返回幾筆資料（預設 10）
+        db_session: 資料庫 session（選填）
+
+    Returns:
+        主題統計列表（按分析日期倒序）
+
+    Example:
+        ```python
+        from datetime import date
+        from database.operations import get_topic_statistics
+
+        # 獲取所有統計
+        all_stats = get_topic_statistics()
+
+        # 獲取特定日期的統計
+        specific_stats = get_topic_statistics(analysis_date=date(2026, 1, 10))
+
+        for stat in all_stats:
+            print(f"{stat.analysis_date}: {stat.total_articles}篇文章")
+        ```
+    """
+    from database.models import NewsTopicStatistics
+
+    should_close_session = False
+    if db_session is None:
+        db_session = next(get_db())
+        should_close_session = True
+
+    try:
+        query = db_session.query(NewsTopicStatistics)
+
+        if analysis_date:
+            query = query.filter_by(analysis_date=analysis_date)
+
+        statistics = query.order_by(
+            NewsTopicStatistics.analysis_date.desc()
+        ).limit(limit).all()
+
+        return statistics
 
     finally:
         if should_close_session:
