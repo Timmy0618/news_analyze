@@ -49,9 +49,12 @@ result = scraper.scrape_news(
 scraper = NewsScraper(
     config,
     firecrawl_url="http://localhost:3002",
-    llm_url="http://localhost:8000/v1",
+    llm_url="http://localhost:8000/v1",  # 或設定環境變數 LLM_URL
     model_name="Qwen/Qwen3-4B-Instruct-2507"
 )
+
+# 如果不指定 llm_url，會自動從環境變數 LLM_URL 讀取
+scraper = NewsScraper(config)
 
 # 指定日期
 from datetime import datetime

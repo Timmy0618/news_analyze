@@ -42,7 +42,7 @@ class NewsScraper:
         self,
         config: NewsScraperConfig,
         firecrawl_url: str = "http://localhost:3002",
-        llm_url: str = "http://localhost:8000/v1",
+        llm_url: str = None,
         model_name: str = "Qwen/Qwen3-4B-Instruct-2507",
     ):
         """
@@ -51,12 +51,17 @@ class NewsScraper:
         Args:
             config: 網站配置
             firecrawl_url: Firecrawl API 的 URL
-            llm_url: LLM API 的 URL
+            llm_url: LLM API 的 URL (如果為 None 則從環境變量 LLM_URL 讀取)
             model_name: 使用的模型名稱
         """
         load_dotenv()
         self.config = config
         self.firecrawl_url = firecrawl_url
+        
+        # 如果沒有提供 llm_url，則從環境變量讀取
+        if llm_url is None:
+            llm_url = os.getenv("LLM_URL", "http://localhost:8000/v1")
+        
         self.llm = ChatOpenAI(
             base_url=llm_url,
             api_key=os.getenv("token", "EMPTY"),
