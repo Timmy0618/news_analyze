@@ -111,4 +111,4 @@ uv run example_other_site.py
 
 - `langchain-openai`: LLM 支援
 - `requests`: HTTP 請求
-- Python 3.14+
+- Python 3.13+
