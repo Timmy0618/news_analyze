@@ -9,6 +9,7 @@ from typing import List, Dict, Optional
 import sys
 import os
 import pandas as pd
+import plotly.express as px
 
 # 添加專案根目錄到 Python 路徑
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -646,10 +647,10 @@ def main():
                         with col1:
                             st.metric("總文章數", stat["total_articles"])
                         with col2:
-                            st.metric("主題數量", len(stat["topics_data"].get("topics", [])))
+                            st.metric("主題數量", len(stat["topics_data"]))
                         
                         # 顯示主題列表
-                        topics = stat["topics_data"].get("topics", [])
+                        topics = stat["topics_data"]
                         if topics:
                             st.subheader("🏷️ 熱門主題排行")
                             
@@ -677,6 +678,45 @@ def main():
                                 hide_index=True,
                                 width='stretch'
                             )
+                            
+                            # 創建氣泡圖顯示主題重要度
+                            st.subheader("📊 主題重要度視覺化")
+                            
+                            # 準備氣泡圖數據
+                            bubble_data = []
+                            for i, topic in enumerate(topics):
+                                bubble_data.append({
+                                    '主題': topic['name'],
+                                    '排名': topic['rank'],
+                                    '文章數量': topic['article_count'],
+                                    '描述': topic['description'][:50] + '...' if len(topic['description']) > 50 else topic['description']
+                                })
+                            
+                            bubble_df = pd.DataFrame(bubble_data)
+                            
+                            # 創建氣泡圖
+                            fig = px.scatter(
+                                bubble_df, 
+                                x='排名', 
+                                y='主題',
+                                size='文章數量',
+                                color='文章數量',
+                                hover_name='主題',
+                                hover_data=['描述', '文章數量'],
+                                title='主題重要度氣泡圖 (氣泡大小表示相關文章數量)',
+                                size_max=50,
+                                color_continuous_scale='Blues'
+                            )
+                            
+                            # 調整圖表佈局
+                            fig.update_layout(
+                                xaxis=dict(tickmode='linear', tick0=1, dtick=1),
+                                yaxis=dict(autorange="reversed"),  # 排名1在上面
+                                height=400
+                            )
+                            
+                            # 顯示圖表
+                            st.plotly_chart(fig, use_container_width=True)
                         else:
                             st.warning("該日期沒有主題分析資料")
                     else:
