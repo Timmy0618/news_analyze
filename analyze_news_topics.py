@@ -5,12 +5,12 @@ from datetime import datetime, date
 from typing import List, Dict, Any, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from langchain_openai import ChatOpenAI
 
 from database.config import get_db
 from database.models import NewsArticle
 from database.operations import save_topic_statistics
 from utils.jina_client import JinaClient
+from utils.llm import create_llm
 
 
 def _extract_json_object(text: str) -> str:
@@ -103,15 +103,8 @@ def analyze_topics_with_llm(titles: List[str]) -> dict:
 }}
 """
 
-    llm_url = os.getenv("LLM_URL", "http://localhost:8000/v1")
-    model_name = os.getenv("LLM_MODEL", "Qwen/Qwen3-4B-Instruct-2507")
-
-    llm = ChatOpenAI(
-        base_url=llm_url,
-        api_key=os.getenv("token", "EMPTY"),
-        model=model_name,
+    llm = create_llm(
         temperature=0,
-        timeout=120,
     )
 
     def _clean_content(raw: str) -> str:

@@ -10,7 +10,7 @@ import json
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
-from langchain_openai import ChatOpenAI
+from utils.llm import create_llm
 
 
 def filter_existing_links(links: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
@@ -114,9 +114,8 @@ class NewsScraper:
         if llm_url is None:
             llm_url = os.getenv("LLM_URL", "http://localhost:8000/v1")
         
-        self.llm = ChatOpenAI(
+        self.llm = create_llm(
             base_url=llm_url,
-            api_key=os.getenv("token", "EMPTY"),
             model=model_name,
             temperature=0.7,
             timeout=120,
