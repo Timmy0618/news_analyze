@@ -11,10 +11,10 @@ wheels/
 
 ollama/
 open-webui/
-firecrawl/
 searxng/
 huggingface/
 logs/
  
 # Environment files
 .env
+*.sql
