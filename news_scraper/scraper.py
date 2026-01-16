@@ -10,7 +10,7 @@ import json
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
-from utils.llm import create_llm
+from utils.llm import create_llm, create_tokenizer
 
 
 def filter_existing_links(links: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
@@ -109,6 +109,14 @@ class NewsScraper:
         self.config = config
         self.firecrawl_url = firecrawl_url
         self.debug = debug
+        self.model_name = model_name
+        
+        # 初始化 tokenizer
+        self.tokenizer = create_tokenizer(model_name)
+
+        # 你可以依你的服務端設定調整：總 context 與預留輸出 token
+        self.max_context_tokens = int(os.getenv("MAX_CONTEXT_TOKENS", "8192"))
+        self.reserve_output_tokens = int(os.getenv("RESERVE_OUTPUT_TOKENS", "512"))
         
         # 如果沒有提供 llm_url，則從環境變量讀取
         if llm_url is None:
@@ -120,6 +128,34 @@ class NewsScraper:
             temperature=0.7,
             timeout=120,
         )
+    
+    def count_tokens(self, text: str) -> int:
+        if not self.tokenizer:
+            return len(text)  # fallback（不準，但避免崩）
+        return len(self.tokenizer.encode(text, add_special_tokens=False))
+
+    def truncate_to_tokens(self, text: str, max_tokens: int) -> str:
+        """以 token 為單位截斷文字"""
+        if not self.tokenizer:
+            # 粗估：中文約 1字≈1token；混合內容保守一點用 2 chars/token
+            approx_chars = max_tokens * 2
+            return text[:approx_chars]
+        ids = self.tokenizer.encode(text, add_special_tokens=False)
+        if len(ids) <= max_tokens:
+            return text
+        ids = ids[:max_tokens]
+        return self.tokenizer.decode(ids, skip_special_tokens=True)
+
+    def fit_prompt(self, prompt: str) -> str:
+        """
+        把 prompt 壓到 <= max_context_tokens - reserve_output_tokens
+        （注意：這是保守估算，因為 ChatOpenAI wrapper 可能還會加額外模板）
+        """
+        budget = max(256, self.max_context_tokens - self.reserve_output_tokens)
+        tok = self.count_tokens(prompt)
+        if tok <= budget:
+            return prompt
+        return self.truncate_to_tokens(prompt, budget)
     
     def scrape_page(self, url: str, tags: List[str]) -> str:
         """
@@ -296,16 +332,27 @@ class NewsScraper:
         """
         print(f"  呼叫 LLM 修正 JSON 格式...")
         
-        fix_query = f"""以下 JSON 格式有錯誤，請修正並只回傳正確的 JSON（不要其他文字）：
+        prefix = "以下 JSON 格式有錯誤，請修正並只回傳正確的 JSON（不要其他文字）：\n\n錯誤的 JSON：\n"
+        suffix = "\n\n要求：\n1. 只回傳修正後的 JSON 陣列\n2. 格式：[{{\"title\": \"標題\", \"link\": \"連結\"}}]\n3. 不要任何解釋或其他文字\n4. 確保 JSON 格式正確、完整"
 
-錯誤的 JSON：
-{broken_json}
+        # 先算 prefix+suffix 佔用
+        fixed_tokens = self.count_tokens(prefix + suffix)
+        budget = max(256, self.max_context_tokens - self.reserve_output_tokens - fixed_tokens)
 
-要求：
-1. 只回傳修正後的 JSON 陣列
-2. 格式：[{{"title": "標題", "link": "連結"}}]
-3. 不要任何解釋或其他文字
-4. 確保 JSON 格式正確、完整"""
+        broken_json = self.truncate_to_tokens(broken_json, budget)
+
+        fix_query = prefix + broken_json + suffix
+
+        # 檢查總 token 數，如果超過，再縮 broken_json
+        tok = self.count_tokens(fix_query)
+        limit = self.max_context_tokens - self.reserve_output_tokens
+        if tok > limit:
+            overflow = tok - limit
+            # 再縮一點 broken_json（保守縮 overflow + safety）
+            broken_json = self.truncate_to_tokens(broken_json, max(0, budget - overflow - 64))
+            fix_query = prefix + broken_json + suffix
+
+        print(f"  fix prompt tokens(估): {self.count_tokens(fix_query)}")
 
         # 儲存傳給 LLM 的 query（用於 debug）
         if save_dir and page_num is not None and self.debug:
@@ -408,15 +455,11 @@ class NewsScraper:
             return []
         
         # 限制內容長度避免 token 過多
-        max_content_len = 8000
-        if len(content_to_parse) > max_content_len:
-            content_to_parse = content_to_parse[:max_content_len]
-        
+        # 改為 token-based 截斷：只截 content，不截指令
         # 從目標日期中提取月/日格式（如 "2026/01/07" → "01/07"）
         target_date_short = date_str.split('/')[-2] + '/' + date_str.split('/')[-1]
-        
-        # 構建通用的 LLM 查詢
-        extract_query = f"""從以下內容中提取日期為「{target_date_short}」的新聞。
+
+        prefix = f"""從以下內容中提取日期為「{target_date_short}」的新聞。
 
 內容格式：
 - 每則新聞包含：日期時間 → 類別 → 標題
@@ -428,7 +471,8 @@ class NewsScraper:
 3. 從「連結列表：」中找到標題完全匹配的連結
 
 內容：
-{content_to_parse}
+"""
+        suffix = f"""
 
 請用 JSON 格式回答（只輸出 JSON）：
 [
@@ -436,6 +480,23 @@ class NewsScraper:
 ]
 
 注意：只提取日期為「{target_date_short}」的新聞，連結保持原格式。找不到則回答 []"""
+
+        # 先算 prefix+suffix 佔用
+        fixed_tokens = self.count_tokens(prefix + suffix)
+        budget = max(256, self.max_context_tokens - self.reserve_output_tokens - fixed_tokens)
+
+        content_to_parse = self.truncate_to_tokens(content_to_parse, budget)
+
+        extract_query = prefix + content_to_parse + suffix
+
+        # 檢查總 token 數，如果超過，再縮 content
+        tok = self.count_tokens(extract_query)
+        limit = self.max_context_tokens - self.reserve_output_tokens
+        if tok > limit:
+            overflow = tok - limit
+            # 再縮一點 content（保守縮 overflow + safety）
+            content_to_parse = self.truncate_to_tokens(content_to_parse, max(0, budget - overflow - 64))
+            extract_query = prefix + content_to_parse + suffix
 
         # 儲存傳給 LLM 的 query（用於 debug）
         if save_dir and page_num is not None and self.debug:
@@ -449,6 +510,8 @@ class NewsScraper:
         try:
             print(f"  正在呼叫 LLM 提取新聞連結...")
             print(f"  傳送內容長度: {len(content_to_parse)} 字元")
+            
+            print(f"  prompt tokens(估): {self.count_tokens(extract_query)}")
             response = self.llm.invoke(extract_query)
             result_text = response.content.strip()
             print(f"  LLM 回應長度: {len(result_text)} 字元")
@@ -537,10 +600,12 @@ class NewsScraper:
         Returns:
             (記者, 大綱) 的元組
         """
+        # 用 token 取 snippet（取代 [:1500]）
+        snippet = self.truncate_to_tokens(content, 800)  # 例如取 800 tokens 當摘要輸入
         extract_query = f"""從以下新聞內容提取兩項資訊：
 
 內容：
-{content[:1500]}
+{snippet}
 
 任務：
 1. 找出記者署名（格式：政治中心／綜合報導、記者XXX／台北報導、XXX／報導等）
@@ -552,6 +617,31 @@ class NewsScraper:
 - 重點1
 - 重點2
 - 重點3"""
+
+        # 檢查總 token 數，如果超過，再縮 snippet
+        tok = self.count_tokens(extract_query)
+        limit = self.max_context_tokens - self.reserve_output_tokens
+        if tok > limit:
+            overflow = tok - limit
+            # 再縮一點 snippet（保守縮 overflow + safety）
+            snippet = self.truncate_to_tokens(snippet, max(0, 800 - overflow - 64))
+            extract_query = f"""從以下新聞內容提取兩項資訊：
+
+內容：
+{snippet}
+
+任務：
+1. 找出記者署名（格式：政治中心／綜合報導、記者XXX／台北報導、XXX／報導等）
+2. 整理新聞內容大綱（3-5個重點，每個重點一句話）
+
+請用以下格式回答：
+記者：XXX
+大綱：
+- 重點1
+- 重點2
+- 重點3"""
+
+        print(f"  extract article prompt tokens(估): {self.count_tokens(extract_query)}")
 
         # 儲存傳給 LLM 的 query（用於 debug）
         if save_dir and article_id and self.debug:
@@ -707,7 +797,7 @@ class NewsScraper:
             else:
                 news_id = link.split('newsid=')[-1].split('&')[0] if 'newsid=' in link else str(i)
             
-            reporter, summary = self.extract_article_info(article_content[:2000], save_dir=raw_data_dir, article_id=news_id)
+            reporter, summary = self.extract_article_info(article_content, save_dir=raw_data_dir, article_id=news_id)
             
             articles_data.append({
                 "標題": title,
