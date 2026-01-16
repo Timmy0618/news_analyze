@@ -14,7 +14,7 @@ open-webui/
 searxng/
 huggingface/
 logs/
- 
+
 # Environment files
 .env
-*.sql
+.DS_Store
