@@ -92,7 +92,7 @@ class NewsScraper:
         config: NewsScraperConfig,
         firecrawl_url: str = "http://localhost:3002",
         llm_url: str = None,
-        model_name: str = "Qwen/Qwen3-4B-Instruct-2507",
+        model_name: str = None,
         debug: bool = False,
     ):
         """

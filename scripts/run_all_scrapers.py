@@ -106,9 +106,11 @@ def run_all_scrapers(
             scraper = scraper_class(config, debug=debug)
             
             # 執行爬蟲
+            # TvbsScraper 只爬一頁
+            pages_to_use = 1 if scraper_class == TvbsScraper else num_pages
             result = scraper.scrape_news(
                 target_date=target_date,
-                num_pages=num_pages,
+                num_pages=pages_to_use,
                 max_articles=max_articles,
                 output_file=output_file
             )

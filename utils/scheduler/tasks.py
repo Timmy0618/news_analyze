@@ -36,3 +36,7 @@ def run_embeddings(
         limit=limit,
         force_update=force,
     )
+
+
+if __name__ == "__main__":
+    run_embeddings()
