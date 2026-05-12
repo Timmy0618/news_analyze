@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
@@ -7,9 +8,9 @@ load_dotenv()
 
 
 def create_llm(
-    base_url: str = None,
-    api_key: str = None,
-    model: str = None,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
     temperature: float = 0.7,
     timeout: int = 120,
 ) -> ChatOpenAI:

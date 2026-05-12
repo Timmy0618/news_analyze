@@ -27,7 +27,7 @@ class SetnScraper(NewsScraper):
         """返回爬蟲配置"""
         return NewsScraperConfig(
             base_url="https://www.setn.com/ViewAll.aspx?pagegroupid=6",
-            article_tags=["#ckuse", "#Content1"],
+            article_tags=["article"],
             page_url_format="https://www.setn.com/ViewAll.aspx?pagegroupid=6&p={page}",
         )
     
@@ -76,6 +76,9 @@ class SetnScraper(NewsScraper):
         print(f"  ✗ 無法找到三立新聞的新聞區塊")
         return None
     
+    def _news_url_pattern(self) -> str:
+        return "NewsID="
+
     def build_full_link(self, link: str) -> str:
         """
         覆寫父類方法，專門處理三立新聞的連結

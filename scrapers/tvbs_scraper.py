@@ -27,7 +27,7 @@ class TvbsScraper(NewsScraper):
         """返回爬蟲配置"""
         return NewsScraperConfig(
             base_url="https://news.tvbs.com.tw/politics",
-            article_tags=["article", ".article_content", ".article-body"],
+            article_tags=["article"],
         )
     
     def extract_news_block(self, content: str) -> Optional[str]:
@@ -75,6 +75,34 @@ class TvbsScraper(NewsScraper):
         print(f"  ✗ 無法找到 TVBS 新聞的新聞區塊")
         return None
     
+    def _news_url_pattern(self) -> str:
+        return "/politics/"
+
+    def parse_news_items(self, soup, target_date: str):
+        parts = target_date.split('/')
+        date_short = f"{parts[1]}/{parts[2]}"
+        items = []
+        seen = set()
+        for li in soup.find_all('li'):
+            a = li.find('a', href=lambda h: h and '/politics/' in h)
+            if not a:
+                continue
+            h2 = a.find('h2', class_='txt')
+            title = h2.get_text(strip=True) if h2 else ''
+            if not title:
+                img = a.find('img', alt=True)
+                title = img.get('alt', '') if img else ''
+            if not title or len(title) < 3:
+                continue
+            time_div = a.find('div', class_='time')
+            if not time_div or date_short not in time_div.get_text():
+                continue
+            href = str(a.get('href', ''))
+            if href and href not in seen:
+                seen.add(href)
+                items.append((title, href))
+        return items
+
     def build_full_link(self, link: str) -> str:
         """
         覆寫父類方法，專門處理 TVBS 新聞的連結
@@ -104,28 +132,6 @@ class TvbsScraper(NewsScraper):
         # TVBS 政治版不分頁，總是返回首頁
         return self.config.base_url
     
-    def clean_html_to_text(self, content: str):
-        """
-        覆寫父類方法，TVBS 只保留連結列表部分
-        
-        Args:
-            content: HTML 內容
-            
-        Returns:
-            清理後的文本（只包含連結列表）
-        """
-        # 先用父類方法清理 HTML
-        cleaned_text, links_info = super().clean_html_to_text(content)
-        
-        # TVBS 的文本中會重複出現標題，只保留"連結列表："部分即可
-        # 因為連結列表已經包含了完整的 [標題](連結) 格式
-        result_text = "連結列表：\n" + "\n".join(links_info)
-        
-        print(f"  ✓ TVBS 特殊處理：只保留連結列表區段，內容長度: {len(result_text)} 字元")
-        
-        # 返回純文本（不返回 tuple），讓基類知道這已經是最終格式
-        return result_text
-
 
 def main():
     """主程式 - TVBS 新聞政治版"""

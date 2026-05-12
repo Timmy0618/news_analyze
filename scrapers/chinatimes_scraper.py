@@ -27,7 +27,7 @@ class ChinaTimesScraper(NewsScraper):
         """返回爬蟲配置"""
         return NewsScraperConfig(
             base_url="https://www.chinatimes.com/politic/total?chdtv",
-            article_tags=[".article-body", ".article-content", "article", "main"],
+            article_tags=["article", "main"],
             page_url_format="https://www.chinatimes.com/politic/total?page={page}&chdtv",
         )
     
@@ -66,6 +66,9 @@ class ChinaTimesScraper(NewsScraper):
         print(f"  ✗ 無法找到中時電子報的新聞區塊")
         return None
     
+    def _news_url_pattern(self) -> str:
+        return "/realtimenews/"
+
     def build_full_link(self, link: str) -> str:
         """
         覆寫父類方法，專門處理中時電子報的連結
