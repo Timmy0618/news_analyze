@@ -1,4 +1,22 @@
 services:
+  api:
+    build: .
+    container_name: news_api
+    env_file: .env
+    ports:
+      - "127.0.0.1:8001:8001"
+    command: python api_server.py
+    restart: unless-stopped
+
+  streamlit:
+    build: .
+    container_name: news_streamlit
+    env_file: .env
+    ports:
+      - "127.0.0.1:8501:8501"
+    command: python run_streamlit.py
+    restart: unless-stopped
+
   searxng:
     image: searxng/searxng:latest
     container_name: searxng

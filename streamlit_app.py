@@ -19,6 +19,44 @@ from database.config import get_db
 from database.models import NewsArticle
 from sqlalchemy import func
 
+def render_article_graph(nodes: list, edges: list, color_map: dict) -> str:
+    """Generate pyvis network HTML for embedding in Streamlit."""
+    from pyvis.network import Network
+
+    net = Network(height="600px", width="100%", bgcolor="#1a1a2e", font_color="#eeeeee")
+    net.set_options("""
+    {
+      "physics": {
+        "forceAtlas2Based": {
+          "gravitationalConstant": -80,
+          "springLength": 150,
+          "springConstant": 0.05,
+          "damping": 0.4
+        },
+        "minVelocity": 0.75,
+        "solver": "forceAtlas2Based"
+      },
+      "interaction": {"tooltipDelay": 100, "hideEdgesOnDrag": true}
+    }
+    """)
+
+    for node in nodes:
+        color = color_map.get(node["source_site"], "#95a5a6")
+        label = node["title"][:18] + ("…" if len(node["title"]) > 18 else "")
+        tooltip = (
+            f"<b>{node['title']}</b><br>"
+            f"日期：{node['publish_date']}<br>"
+            f"來源：{node['source_site']}<br>"
+            f"記者：{node['reporter'] or '—'}"
+        )
+        net.add_node(node["id"], label=label, title=tooltip, color=color, size=12)
+
+    for edge in edges:
+        net.add_edge(edge["source"], edge["target"], value=round(edge["weight"], 3), color="#44475a")
+
+    return net.generate_html()
+
+
 class NewsSearchApp:
     """新聞搜尋應用程式"""
 
@@ -266,8 +304,8 @@ def main():
     # 模式選擇
     mode = st.sidebar.radio(
         "選擇模式",
-        ["📈 主題統計", "🔍 搜尋模式", "📚 瀏覽模式"],
-        help="搜尋模式：使用向量或關鍵字搜尋；瀏覽模式：查看所有文章；主題統計：查看新聞主題分析結果"
+        ["📈 主題統計", "🔍 搜尋模式", "📚 瀏覽模式", "🕸️ 關聯圖譜"],
+        help="搜尋模式：使用向量或關鍵字搜尋；瀏覽模式：查看所有文章；主題統計：查看新聞主題分析結果；關聯圖譜：視覺化文章關聯"
     )
 
     # 側邊欄 - 設定
@@ -370,6 +408,31 @@ def main():
 
             # 載入按鈕
             load_stats_button = st.button("📊 載入統計", type="primary", width='stretch')
+
+        elif mode == "🕸️ 關聯圖譜":
+            st.header("🕸️ 圖譜設定")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                graph_date_from = st.date_input("開始日期", value=None, key="graph_date_from")
+            with col2:
+                graph_date_to = st.date_input("結束日期", value=None, key="graph_date_to")
+
+            sources = app.get_sources()
+            source_options = ["全部"] + sources
+            _graph_source_display = st.selectbox("新聞來源", source_options, key="graph_source")
+            graph_source = None if _graph_source_display == "全部" else _graph_source_display
+
+            graph_max_nodes = st.slider("最多節點數", min_value=20, max_value=200, value=100, step=10)
+
+            graph_button = st.button("🕸️ 建立圖譜", type="primary", width="stretch")
+
+            # Initialize vars used by other mode main-content blocks
+            search_button = False
+            browse_button = False
+            load_stats_button = False
+            sort_by = "date_desc"
+            page_size = 50
 
         else:  # 瀏覽模式
             st.header("📚 瀏覽設定")
@@ -526,6 +589,57 @@ def main():
         else:
             # 搜尋模式歡迎頁面
             st.info("👋 請在左側輸入搜尋條件，開始探索新聞資料庫")
+
+    elif mode == "🕸️ 關聯圖譜":
+        if "graph_data" not in st.session_state:
+            st.session_state.graph_data = None
+
+        if graph_button:
+            with st.spinner("🕸️ 正在計算文章關聯圖譜..."):
+                from utils.graph_builder import get_article_graph
+                st.session_state.graph_data = get_article_graph(
+                    date_from=graph_date_from if graph_date_from else None,
+                    date_to=graph_date_to if graph_date_to else None,
+                    source_site=graph_source,
+                    max_nodes=graph_max_nodes,
+                )
+
+        if st.session_state.graph_data:
+            nodes = st.session_state.graph_data["nodes"]
+            edges = st.session_state.graph_data["edges"]
+
+            if nodes:
+                st.success(f"圖譜包含 {len(nodes)} 個節點、{len(edges)} 條連結")
+
+                _palette = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6", "#1abc9c", "#e67e22", "#34495e"]
+                _sources = sorted({n["source_site"] for n in nodes if n["source_site"]})
+                _color_map = {s: _palette[i % len(_palette)] for i, s in enumerate(_sources)}
+
+                legend_cols = st.columns(min(len(_sources), 6) or 1)
+                for i, src in enumerate(_sources):
+                    legend_cols[i % len(legend_cols)].markdown(
+                        f"<span style='color:{_color_map[src]};font-size:18px'>■</span> {src}",
+                        unsafe_allow_html=True,
+                    )
+
+                import streamlit.components.v1 as components
+                components.html(render_article_graph(nodes, edges, _color_map), height=650, scrolling=False)
+
+                st.markdown("---")
+                st.subheader("📄 文章詳情")
+                title_to_node = {n["title"]: n for n in nodes}
+                selected = st.selectbox("選擇文章查看詳情", ["（請選擇）"] + list(title_to_node.keys()))
+                if selected != "（請選擇）":
+                    n = title_to_node[selected]
+                    st.markdown(f"**標題** {n['title']}")
+                    st.markdown(f"**日期** {n['publish_date']}")
+                    st.markdown(f"**來源** {n['source_site']}")
+                    st.markdown(f"**記者** {n['reporter'] or '—'}")
+                    st.markdown(f"**連結** [{n['url']}]({n['url']})")
+            else:
+                st.warning("所選條件下沒有包含向量的文章，無法建立圖譜")
+        else:
+            st.info("👋 請設定條件並點擊「建立圖譜」開始探索文章關聯")
 
     else:  # 瀏覽模式
         # 初始化 session state 用於分頁

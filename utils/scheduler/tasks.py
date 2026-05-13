@@ -38,5 +38,12 @@ def run_embeddings(
     )
 
 
+def run_obsidian_export(vault_path: str) -> int:
+    from datetime import date
+    from scripts.export_to_obsidian import export_articles
+    today = date.today()
+    return export_articles(vault_path=vault_path, date_from=today, date_to=today)
+
+
 if __name__ == "__main__":
     run_embeddings()

@@ -23,4 +23,5 @@ dependencies = [
     "sqlalchemy>=2.0.45",
     "streamlit>=1.52.2",
     "uvicorn>=0.40.0",
+    "pyvis>=0.3.2",
 ]

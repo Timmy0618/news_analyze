@@ -366,12 +366,12 @@ class NewsScraper:
         Returns:
             (記者, 大綱) 的元組（大綱固定為空字串）
         """
-        snippet = content[:1500]
+        # Check reporter/author links across full content before truncating
+        link_m = re.search(r'\[([^\]]{1,15})\]\(https?://[^)]+/(?:reporter|author)/[^)]+\)', content)
+        if link_m:
+            return link_m.group(1).strip(), ""
 
-        # ChinaTimes style: [ReporterName](https://site/reporter/ID) — check before stripping
-        ct_m = re.search(r'\[([^\]]{1,15})\]\(https?://[^)]+/reporter/[^)]+\)', snippet)
-        if ct_m:
-            return ct_m.group(1).strip(), ""
+        snippet = content[:8000]
 
         # Firecrawl renders reporter names as markdown links [name](url); strip to plain text
         snippet = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', snippet)

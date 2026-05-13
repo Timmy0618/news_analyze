@@ -170,6 +170,21 @@ def _setup_scheduler() -> Optional[BackgroundScheduler]:
     else:
         logger.info("scheduler: embeddings disabled via EMBED_INTERVAL_MINUTES")
 
+    obsidian_vault = os.getenv("OBSIDIAN_VAULT_PATH", "").strip()
+    if obsidian_vault:
+        obsidian_hour = int(os.getenv("OBSIDIAN_EXPORT_HOUR", "3"))
+        from utils.scheduler.tasks import run_obsidian_export
+        scheduler.add_job(
+            run_obsidian_export,
+            "cron",
+            hour=obsidian_hour,
+            minute=0,
+            id="obsidian_export",
+            replace_existing=True,
+            kwargs={"vault_path": obsidian_vault},
+        )
+        logger.info("scheduler: obsidian export daily at %s:00 to %s", obsidian_hour, obsidian_vault)
+
     if scheduler.get_jobs():
         scheduler.start()
         return scheduler
