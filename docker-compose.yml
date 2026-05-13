@@ -17,6 +17,18 @@ services:
     command: python run_streamlit.py
     restart: unless-stopped
 
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
+    container_name: news_frontend
+    ports:
+      - "127.0.0.1:3000:80"
+    restart: unless-stopped
+
   searxng:
     image: searxng/searxng:latest
     container_name: searxng

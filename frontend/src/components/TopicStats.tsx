@@ -1,0 +1,115 @@
+import { useState, useEffect } from 'react'
+import { supabase } from '../lib/supabase'
+import {
+  BarChart, Bar, Cell, XAxis, YAxis, Tooltip,
+  LineChart, Line, CartesianGrid, ResponsiveContainer,
+} from 'recharts'
+
+interface DailyCount {
+  publish_date: string
+  count: number
+}
+
+interface SourceCount {
+  source_site: string
+  count: number
+}
+
+const COLORS = ['#60a5fa', '#34d399', '#f87171', '#fbbf24', '#a78bfa', '#f472b6']
+
+export default function TopicStats() {
+  const [daily, setDaily] = useState<DailyCount[]>([])
+  const [bySite, setBySite] = useState<SourceCount[]>([])
+  const [totalArticles, setTotalArticles] = useState(0)
+  const [dateRange, setDateRange] = useState({ min: '', max: '' })
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+
+      const { data: all, count } = await supabase
+        .from('news_articles')
+        .select('publish_date,source_site', { count: 'exact' })
+        .order('publish_date', { ascending: true })
+
+      if (!all) { setLoading(false); return }
+
+      setTotalArticles(count ?? 0)
+
+      const dateMap: Record<string, number> = {}
+      const siteMap: Record<string, number> = {}
+      let minDate = '', maxDate = ''
+
+      for (const row of all) {
+        const d = row.publish_date as string
+        dateMap[d] = (dateMap[d] ?? 0) + 1
+        siteMap[row.source_site as string] = (siteMap[row.source_site as string] ?? 0) + 1
+        if (!minDate || d < minDate) minDate = d
+        if (!maxDate || d > maxDate) maxDate = d
+      }
+
+      setDateRange({ min: minDate, max: maxDate })
+      setDaily(Object.entries(dateMap).map(([publish_date, count]) => ({ publish_date, count })))
+      setBySite(
+        Object.entries(siteMap)
+          .map(([source_site, count]) => ({ source_site, count }))
+          .sort((a, b) => b.count - a.count),
+      )
+      setLoading(false)
+    }
+    load()
+  }, [])
+
+  if (loading) return <div className="text-gray-400 text-center py-12">載入統計中...</div>
+
+  return (
+    <div className="space-y-8">
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-gray-800 rounded-lg p-4 text-center">
+          <div className="text-3xl font-bold text-blue-400">{totalArticles.toLocaleString()}</div>
+          <div className="text-sm text-gray-400 mt-1">總文章數</div>
+        </div>
+        <div className="bg-gray-800 rounded-lg p-4 text-center">
+          <div className="text-3xl font-bold text-green-400">{bySite.length}</div>
+          <div className="text-sm text-gray-400 mt-1">來源數量</div>
+        </div>
+        <div className="bg-gray-800 rounded-lg p-4 text-center">
+          <div className="text-lg font-bold text-yellow-400">{dateRange.min}</div>
+          <div className="text-xs text-gray-400">至</div>
+          <div className="text-lg font-bold text-yellow-400">{dateRange.max}</div>
+        </div>
+      </div>
+
+      <div className="bg-gray-800 rounded-lg p-4">
+        <h3 className="text-sm font-medium text-gray-300 mb-4">每日文章數量</h3>
+        <ResponsiveContainer width="100%" height={240}>
+          <LineChart data={daily}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+            <XAxis dataKey="publish_date" tick={{ fill: '#9ca3af', fontSize: 11 }} />
+            <YAxis tick={{ fill: '#9ca3af', fontSize: 11 }} />
+            <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none' }} />
+            <Line type="monotone" dataKey="count" stroke="#60a5fa" dot={false} strokeWidth={2} name="篇數" />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="bg-gray-800 rounded-lg p-4">
+        <h3 className="text-sm font-medium text-gray-300 mb-4">各來源文章數</h3>
+        <ResponsiveContainer width="100%" height={240}>
+          <BarChart data={bySite}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+            <XAxis dataKey="source_site" tick={{ fill: '#9ca3af', fontSize: 11 }} />
+            <YAxis tick={{ fill: '#9ca3af', fontSize: 11 }} />
+            <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none' }} />
+            <Bar dataKey="count" name="篇數">
+              {bySite.map((_, i) => (
+                <Cell key={i} fill={COLORS[i % COLORS.length]} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  )
+}
