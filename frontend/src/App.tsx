@@ -3,6 +3,7 @@ import TopicStats from './components/TopicStats'
 import SearchPage from './components/SearchPage'
 import BrowsePage from './components/BrowsePage'
 import GraphPage from './components/GraphPage'
+import { supabaseConfigured } from './lib/supabase'
 
 const TABS = [
   { id: 'stats', label: '📈 主題統計' },
@@ -38,6 +39,17 @@ export default function App() {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-6">
+        {!supabaseConfigured && (
+          <div className="mb-4 bg-yellow-900/40 border border-yellow-600 rounded-lg p-4 text-sm text-yellow-300">
+            <div className="font-semibold mb-1">⚠️ 尚未設定 Supabase 憑證</div>
+            <div>在 <code className="bg-yellow-900/60 px-1 rounded">.env</code> 加入以下變數後重建 container：</div>
+            <pre className="mt-2 bg-yellow-900/60 rounded p-2 text-xs text-yellow-200">
+{`VITE_SUPABASE_URL=https://<project>.supabase.co
+VITE_SUPABASE_ANON_KEY=your_anon_key`}
+            </pre>
+            <div className="mt-2 text-xs text-yellow-400">然後執行：<code className="bg-yellow-900/60 px-1 rounded">docker compose build frontend && docker compose up -d frontend</code></div>
+          </div>
+        )}
         {tab === 'stats' && <TopicStats />}
         {tab === 'search' && <SearchPage />}
         {tab === 'browse' && <BrowsePage />}
