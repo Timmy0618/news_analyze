@@ -1,4 +1,4 @@
-.PHONY: start stop api ui scrape embed migrate firecrawl db logs help
+.PHONY: start stop api scrape embed migrate firecrawl db logs help
 
 # 啟動所有服務（firecrawl + api）
 start: firecrawl
@@ -22,10 +22,6 @@ stop:
 # API 伺服器（含排程器）
 api:
 	uv run python api_server.py
-
-# Streamlit UI
-ui:
-	uv run python run_streamlit.py
 
 # 手動執行爬蟲（可傳參數：make scrape PAGES=3 MAX=50 DATE=2026-05-12）
 PAGES ?= 1
@@ -55,7 +51,6 @@ help:
 	@echo "make db         - 啟動本地 postgres + pgadmin"
 	@echo "make stop       - 停止所有 docker 服務"
 	@echo "make api        - 僅啟動 API server"
-	@echo "make ui         - 啟動 Streamlit UI"
 	@echo "make scrape     - 手動爬蟲 (PAGES=1 MAX=15 DATE=2026-05-12)"
 	@echo "make embed      - 生成嵌入向量"
 	@echo "make migrate    - 執行 alembic migrations"

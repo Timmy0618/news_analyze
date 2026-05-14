@@ -11,9 +11,6 @@ uv sync
 # Run API server (port 8001, includes background scheduler)
 uv run python api_server.py
 
-# Run Streamlit UI (port 8501)
-uv run python run_streamlit.py
-
 # Run all scrapers manually
 uv run python scripts/run_all_scrapers.py --pages 3 --max-articles 50 --date 2026-01-10
 
@@ -39,7 +36,7 @@ The system has three independent operational phases that run on a schedule insid
 [Scrape phase]  →  [Embed phase]  →  [Search API]
 scrapers/*.py      jina_client.py     api_server.py
      ↓                  ↓                  ↑
- results/*.json   news_articles         Streamlit
+ results/*.json   news_articles         React Frontend
                 (title/summary_embedding)
 ```
 

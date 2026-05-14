@@ -8,11 +8,11 @@
 - **固定時間排程**: 每天 06:00 / 12:00 / 18:00 / 22:00 自動爬取，DB 去重確保不重複
 - **向量嵌入**: 使用 Jina AI (`jina-embeddings-v3`) 將新聞標題轉換為 1024 維向量
 - **語義搜尋**: FastAPI + pgvector 餘弦距離搜尋，支援自然語言查詢
-- **網頁介面**: Streamlit 網頁應用程式
+- **網頁介面**: React 前端（GitHub Pages 部署）
 
 ## 部署應用
 
-[新聞向量搜尋系統](https://newsanalyze-ntnu4778vxnabxkhkfmg69.streamlit.app/)
+[新聞向量搜尋系統](https://timmy0618.github.io/news_analyze/)
 
 ## 系統架構
 
@@ -20,7 +20,7 @@
 [Scrape phase]       →  [Embed phase]       →  [Search API]
 scrapers/*.py            scripts/generate        api_server.py
 BeautifulSoup+regex      _embeddings.py              ↑
-Firecrawl (文章)         Jina AI API           Streamlit UI
+Firecrawl (文章)         Jina AI API           React Frontend
       ↓                       ↓
   news_articles         title_embedding
   (PostgreSQL)          summary_embedding
@@ -40,7 +40,6 @@ make start
 make firecrawl   # 啟動 Firecrawl (port 3002)
 make migrate     # 執行資料庫 migration
 make api         # 啟動 API server (port 8001)
-make ui          # 啟動 Streamlit UI (port 8501)
 ```
 
 ### 所有 make 指令
@@ -52,7 +51,6 @@ make ui          # 啟動 Streamlit UI (port 8501)
 | `make db` | 啟動本地 postgres + pgadmin（開發用） |
 | `make stop` | 停止所有 docker 服務 |
 | `make api` | 啟動 API server |
-| `make ui` | 啟動 Streamlit UI |
 | `make scrape` | 手動執行爬蟲（`PAGES=3 MAX=50 DATE=2026-05-12`） |
 | `make embed` | 生成嵌入向量 |
 | `make migrate` | 執行 alembic upgrade head |
@@ -147,8 +145,7 @@ curl "http://localhost:8001/api/stats"
 .
 ├── Makefile                   # 快速啟動指令
 ├── api_server.py              # FastAPI + APScheduler
-├── streamlit_app.py           # Streamlit 網頁應用程式
-├── run_streamlit.py           # Streamlit 啟動腳本
+├── frontend/                  # React 前端（GitHub Pages 部署）
 ├── alembic/                   # 資料庫遷移
 ├── database/                  # 資料庫模型和操作
 ├── news_scraper/              # 基底爬蟲（BeautifulSoup 解析）
