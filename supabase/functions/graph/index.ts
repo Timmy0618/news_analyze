@@ -5,6 +5,15 @@ interface GraphRequest {
   date_to?: string
   source?: string
   max_nodes?: number
+  k?: number
+}
+
+interface ArticleSummary {
+  id: string
+  title: string
+  url: string
+  publish_date: string
+  reporter: string | null
 }
 
 interface GraphNode {
@@ -12,8 +21,8 @@ interface GraphNode {
   title: string
   source_site: string
   publish_date: string
-  url: string
-  reporter: string | null
+  article_count: number
+  articles: ArticleSummary[]
 }
 
 interface GraphEdge {
@@ -37,6 +46,72 @@ function cosineSim(a: number[], b: number[]): number {
   return dot / (Math.sqrt(na) * Math.sqrt(nb) + 1e-8)
 }
 
+function normVec(v: number[]): number[] {
+  const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) + 1e-8
+  return v.map(x => x / norm)
+}
+
+function kMeansCosine(
+  vectors: number[][],
+  k: number,
+  maxIter = 20,
+): { assignments: number[]; centroids: number[][] } {
+  const n = vectors.length
+  k = Math.min(k, n)
+  if (k <= 1) return { assignments: new Array(n).fill(0), centroids: [normVec(vectors[0])] }
+
+  // K-Means++ initialization: pick centroids biased toward distant points
+  const chosen: number[] = [Math.floor(Math.random() * n)]
+  for (let c = 1; c < k; c++) {
+    const dists = vectors.map((v, i) => {
+      if (chosen.includes(i)) return 0
+      let maxSim = -Infinity
+      for (const ci of chosen) maxSim = Math.max(maxSim, cosineSim(v, vectors[ci]))
+      return Math.max(0, 1 - maxSim)
+    })
+    const total = dists.reduce((s, d) => s + d * d, 0)
+    let rand = Math.random() * total
+    let next = chosen[chosen.length - 1]
+    for (let i = 0; i < n; i++) {
+      rand -= dists[i] * dists[i]
+      if (rand <= 0) { next = i; break }
+    }
+    chosen.push(next)
+  }
+
+  const centroids = chosen.map(i => [...vectors[i]])
+  let assignments = new Array(n).fill(0)
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    const next = vectors.map(v => {
+      let bestC = 0, bestSim = -Infinity
+      for (let c = 0; c < k; c++) {
+        const s = cosineSim(v, centroids[c])
+        if (s > bestSim) { bestSim = s; bestC = c }
+      }
+      return bestC
+    })
+
+    const changed = next.some((a, i) => a !== assignments[i])
+    assignments = next
+    if (!changed) break
+
+    const dim = vectors[0].length
+    for (let c = 0; c < k; c++) {
+      const sum = new Array(dim).fill(0)
+      let count = 0
+      for (let i = 0; i < n; i++) {
+        if (assignments[i] !== c) continue
+        for (let d = 0; d < dim; d++) sum[d] += vectors[i][d]
+        count++
+      }
+      if (count > 0) centroids[c] = normVec(sum)
+    }
+  }
+
+  return { assignments, centroids }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -44,7 +119,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body: GraphRequest = await req.json().catch(() => ({}))
-    const { date_from, date_to, source, max_nodes = 50 } = body
+    const { date_from, date_to, source, max_nodes = 50, k: kParam = 10 } = body
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -70,16 +145,6 @@ Deno.serve(async (req: Request) => {
       })
     }
 
-    const nodes: GraphNode[] = data.map((row) => ({
-      id: String(row.id),
-      title: row.title as string,
-      source_site: row.source_site as string,
-      publish_date: row.publish_date as string,
-      url: row.source_url as string,
-      reporter: row.reporter as string | null,
-    }))
-
-    // pgvector returns as string "[0.1,0.2,...]" via REST API — parse if needed
     const parseEmb = (emb: unknown): number[] | null => {
       if (!emb) return null
       try {
@@ -88,34 +153,90 @@ Deno.serve(async (req: Request) => {
       } catch { return null }
     }
 
-    // Filter out rows with unparseable embeddings
     const valid = data
-      .map((row, i) => ({ node: nodes[i], emb: parseEmb(row.title_embedding) }))
-      .filter((x): x is { node: GraphNode; emb: number[] } => x.emb !== null)
+      .map(row => ({
+        id: String(row.id),
+        title: row.title as string,
+        source_site: row.source_site as string,
+        publish_date: row.publish_date as string,
+        url: row.source_url as string,
+        reporter: row.reporter as string | null,
+        emb: parseEmb(row.title_embedding),
+      }))
+      .filter((x): x is typeof x & { emb: number[] } => x.emb !== null)
 
+    const k = Math.min(kParam, valid.length)
+    const { assignments, centroids } = kMeansCosine(valid.map(x => x.emb), k)
+
+    // Group articles into clusters
+    const clusters = new Map<number, typeof valid>()
+    for (let i = 0; i < valid.length; i++) {
+      const c = assignments[i]
+      if (!clusters.has(c)) clusters.set(c, [])
+      clusters.get(c)!.push(valid[i])
+    }
+
+    // Build topic nodes
+    const nodes: GraphNode[] = []
+    for (const [c, members] of clusters) {
+      const centroid = centroids[c]
+
+      // Representative = article closest to centroid
+      let bestIdx = 0, bestSim = -Infinity
+      for (let i = 0; i < members.length; i++) {
+        const s = cosineSim(members[i].emb, centroid)
+        if (s > bestSim) { bestSim = s; bestIdx = i }
+      }
+
+      // Dominant source_site
+      const siteCounts: Record<string, number> = {}
+      for (const m of members) siteCounts[m.source_site] = (siteCounts[m.source_site] ?? 0) + 1
+      const dominantSite = Object.entries(siteCounts).sort((a, b) => b[1] - a[1])[0][0]
+
+      const latestDate = members.reduce(
+        (best, m) => (m.publish_date > best ? m.publish_date : best),
+        members[0].publish_date,
+      )
+
+      nodes.push({
+        id: `cluster-${c}`,
+        title: members[bestIdx].title,
+        source_site: dominantSite,
+        publish_date: latestDate,
+        article_count: members.length,
+        articles: members.map(m => ({
+          id: m.id,
+          title: m.title,
+          url: m.url,
+          publish_date: m.publish_date,
+          reporter: m.reporter,
+        })),
+      })
+    }
+
+    // Build inter-cluster edges from cross-cluster article pairs with similarity >= 0.7
     const THRESHOLD = 0.7
-    const TOP_K = 3
-    const edgeSet = new Set<string>()
-    const edges: GraphEdge[] = []
+    const edgeSims = new Map<string, number[]>()
 
     for (let i = 0; i < valid.length; i++) {
-      const sims: { j: number; sim: number }[] = []
-      for (let j = 0; j < valid.length; j++) {
-        if (i === j) continue
+      for (let j = i + 1; j < valid.length; j++) {
+        const ci = assignments[i], cj = assignments[j]
+        if (ci === cj) continue
         const sim = cosineSim(valid[i].emb, valid[j].emb)
-        if (sim >= THRESHOLD) sims.push({ j, sim })
-      }
-      sims.sort((a, b) => b.sim - a.sim)
-      for (const { j, sim } of sims.slice(0, TOP_K)) {
-        const key = i < j ? `${i}-${j}` : `${j}-${i}`
-        if (!edgeSet.has(key)) {
-          edgeSet.add(key)
-          edges.push({ source: valid[i].node.id, target: valid[j].node.id, weight: sim })
-        }
+        if (sim < THRESHOLD) continue
+        const key = ci < cj ? `cluster-${ci}|cluster-${cj}` : `cluster-${cj}|cluster-${ci}`
+        if (!edgeSims.has(key)) edgeSims.set(key, [])
+        edgeSims.get(key)!.push(sim)
       }
     }
 
-    return new Response(JSON.stringify({ nodes: valid.map(x => x.node), edges }), {
+    const edges: GraphEdge[] = []
+    for (const [key, sims] of edgeSims) {
+      const [src, tgt] = key.split('|')
+      edges.push({ source: src, target: tgt, weight: sims.reduce((s, x) => s + x, 0) / sims.length })
+    }
+
+    return new Response(JSON.stringify({ nodes, edges }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   } catch (err) {

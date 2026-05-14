@@ -12,13 +12,21 @@ export interface SearchResult extends NewsArticle {
   similarity: number
 }
 
+export interface ArticleSummary {
+  id: string
+  title: string
+  url: string
+  publish_date: string
+  reporter: string | null
+}
+
 export interface GraphNode {
   id: string
   title: string
   source_site: string
   publish_date: string
-  url: string
-  reporter: string | null
+  article_count: number
+  articles: ArticleSummary[]
 }
 
 export interface GraphEdge {

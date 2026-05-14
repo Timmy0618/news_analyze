@@ -14,6 +14,7 @@ export default function GraphPage() {
   const [dateTo, setDateTo] = useState('')
   const [source, setSource] = useState('')
   const [maxNodes, setMaxNodes] = useState(100)
+  const [k, setK] = useState(10)
   const sourceColors = useRef<Record<string, string>>({})
 
   function colorForSource(site: string): string {
@@ -28,13 +29,18 @@ export default function GraphPage() {
     setLoading(true)
     setError('')
     setSelectedNode(null)
+    sourceColors.current = {}
 
-    const { data, error: fnErr } = await supabase.functions.invoke<{ nodes: GraphNode[]; edges: { source: string; target: string; weight: number }[] }>('graph', {
+    const { data, error: fnErr } = await supabase.functions.invoke<{
+      nodes: GraphNode[]
+      edges: { source: string; target: string; weight: number }[]
+    }>('graph', {
       body: {
         date_from: dateFrom || undefined,
         date_to: dateTo || undefined,
         source: source || undefined,
         max_nodes: maxNodes,
+        k,
       },
     })
 
@@ -74,6 +80,12 @@ export default function GraphPage() {
             onChange={(e) => setMaxNodes(Number(e.target.value))}
             className="w-28" />
         </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-gray-400">主題數 K ({k})</label>
+          <input type="range" min={5} max={20} step={1} value={k}
+            onChange={(e) => setK(Number(e.target.value))}
+            className="w-28" />
+        </div>
         <button onClick={buildGraph} disabled={loading}
           className="bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white px-4 py-1.5 rounded text-sm">
           {loading ? '計算中...' : '🕸️ 建立圖譜'}
@@ -87,9 +99,13 @@ export default function GraphPage() {
           <div className="flex-1 bg-gray-900 rounded-lg overflow-hidden" style={{ height: 560 }}>
             <ForceGraph2D
               graphData={graphData}
-              nodeLabel={(n) => (n as GraphNode).title}
+              nodeLabel={(n) => {
+                const node = n as GraphNode
+                return `${node.title} (${node.article_count} 篇)`
+              }}
               nodeColor={(n) => colorForSource((n as GraphNode).source_site)}
-              nodeRelSize={5}
+              nodeVal={(n) => (n as GraphNode).article_count}
+              nodeRelSize={4}
               linkColor={() => 'rgba(255,255,255,0.15)'}
               backgroundColor="#111827"
               onNodeClick={handleNodeClick}
@@ -97,17 +113,30 @@ export default function GraphPage() {
           </div>
 
           {selectedNode && (
-            <div className="w-64 bg-gray-800 rounded-lg p-4 text-sm space-y-2 shrink-0">
-              <div className="font-medium text-white leading-snug">{selectedNode.title}</div>
-              <div className="text-gray-400 space-y-1">
-                <div>{selectedNode.publish_date}</div>
-                <div>{selectedNode.source_site}</div>
-                {selectedNode.reporter && <div>{selectedNode.reporter}</div>}
+            <div className="w-72 bg-gray-800 rounded-lg p-4 text-sm space-y-3 shrink-0 overflow-y-auto" style={{ maxHeight: 560 }}>
+              <div>
+                <div className="font-medium text-white leading-snug">{selectedNode.title}</div>
+                <div className="text-gray-400 text-xs mt-1 space-y-0.5">
+                  <div>{selectedNode.publish_date}</div>
+                  <div>{selectedNode.source_site}</div>
+                </div>
               </div>
-              <a href={selectedNode.url} target="_blank" rel="noopener noreferrer"
-                className="text-blue-400 hover:text-blue-300 text-xs block truncate">
-                原文連結 →
-              </a>
+              <div className="text-purple-300 text-xs font-medium">
+                📰 {selectedNode.article_count} 篇文章
+              </div>
+              <div className="space-y-2">
+                {selectedNode.articles.map((a) => (
+                  <div key={a.id} className="border-l-2 border-gray-600 pl-2">
+                    <a href={a.url} target="_blank" rel="noopener noreferrer"
+                      className="text-blue-400 hover:text-blue-300 leading-snug block">
+                      {a.title}
+                    </a>
+                    <div className="text-gray-500 text-xs mt-0.5">
+                      {a.publish_date}{a.reporter ? ` · ${a.reporter}` : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
