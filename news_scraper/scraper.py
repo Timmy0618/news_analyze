@@ -69,6 +69,7 @@ _BYLINE_PATTERNS = [
     r'文[／/]\s*[^\s，,\n]{2,10}',
     r'撰文[：:]\s*[^\s，,\n]{2,10}',
     r'記者[：:]\s*([^\s，,\n]{2,15})',
+    r'編輯\s+([^\s\n|｜，,]{1,10})',
 ]
 
 
@@ -366,15 +367,18 @@ class NewsScraper:
         Returns:
             (記者, 大綱) 的元組（大綱固定為空字串）
         """
-        # Check reporter/author links across full content before truncating
+        # Check reporter/author links across full content
         link_m = re.search(r'\[([^\]]{1,15})\]\(https?://[^)]+/(?:reporter|author)/[^)]+\)', content)
         if link_m:
             return link_m.group(1).strip(), ""
 
-        snippet = content[:8000]
+        # TVBS uses 編輯 [name](searchresult url) instead of /reporter/ path
+        editor_link_m = re.search(r'編輯\s+\[([^\]]{1,15})\]\(https?://[^)]+\)', content)
+        if editor_link_m:
+            return editor_link_m.group(1).strip(), ""
 
         # Firecrawl renders reporter names as markdown links [name](url); strip to plain text
-        snippet = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', snippet)
+        snippet = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', content)
 
         for pattern in _BYLINE_PATTERNS:
             m = re.search(pattern, snippet)

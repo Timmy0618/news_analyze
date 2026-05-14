@@ -18,6 +18,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from scrapers.tvbs_scraper import TvbsScraper
 from scrapers.setn_scraper import SetnScraper
 from scrapers.chinatimes_scraper import ChinaTimesScraper
+from scrapers.cna_scraper import CnaScraper
+from scrapers.ltn_scraper import LtnScraper
 from database.operations import save_scraper_results_to_db
 
 
@@ -66,6 +68,8 @@ def run_all_scrapers(
         TvbsScraper,
         SetnScraper,
         ChinaTimesScraper,
+        CnaScraper,
+        LtnScraper,
     ]
     
     # 創建結果資料夾
@@ -107,7 +111,7 @@ def run_all_scrapers(
             
             # 執行爬蟲
             # TvbsScraper 只爬一頁
-            pages_to_use = 1 if scraper_class == TvbsScraper else num_pages
+            pages_to_use = 1 if scraper_class in (TvbsScraper, CnaScraper, LtnScraper) else num_pages
             result = scraper.scrape_news(
                 target_date=target_date,
                 num_pages=pages_to_use,
