@@ -139,7 +139,7 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
 
     logger.info(f"取得 {len(clusters)} 個 clusters")
 
-    llm = create_llm(temperature=0.3)
+    llm = create_llm(base_url="https://api.openai.com/v1", model="gpt-4.1", temperature=0.3)
     db = Session()
 
     try:
