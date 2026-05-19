@@ -36,6 +36,28 @@ SUPABASE_URL = os.getenv("VITE_SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("VITE_SUPABASE_ANON_KEY", "")
 FIRECRAWL_URL = os.getenv("FIRECRAWL_URL", "http://localhost:3002")
 
+SITE_TAGS: dict[str, list[str]] = {
+    "ltn.com.tw":     ["article"],
+    "tvbs.com.tw":    ["article"],
+    "setn.com":       ["article"],
+    "cna.com.tw":     ["article"],
+    "chinatimes.com": ["article", "main"],
+}
+
+
+def _tags_for_url(url: str) -> list[str]:
+    for domain, tags in SITE_TAGS.items():
+        if domain in url:
+            return tags
+    return []
+
+
+def _is_valid_content(content: str) -> bool:
+    if len(content.strip()) < 200:
+        return False
+    chinese_chars = sum(1 for c in content if "一" <= c <= "鿿")
+    return chinese_chars >= 50
+
 
 def _fetch_clusters(date_from: str, date_to: str, k: int, min_similarity: float) -> list:
     url = f"{SUPABASE_URL}/functions/v1/graph"
@@ -56,19 +78,33 @@ def _fetch_clusters(date_from: str, date_to: str, k: int, min_similarity: float)
 
 
 def _fetch_article_content(url: str) -> str | None:
-    try:
-        resp = requests.post(
-            f"{FIRECRAWL_URL}/v2/scrape",
-            json={"url": url, "formats": ["markdown"], "onlyMainContent": True},
-            headers={"Content-Type": "application/json"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        content = resp.json().get("data", {}).get("markdown", "")
-        return content.strip() if content else None
-    except Exception as e:
-        logger.warning(f"Firecrawl failed for {url}: {e}")
-        return None
+    def _call(include_tags: list[str], only_main: bool) -> str | None:
+        try:
+            payload: dict = {"url": url, "formats": ["markdown"], "onlyMainContent": only_main}
+            if include_tags:
+                payload["includeTags"] = include_tags
+            resp = requests.post(
+                f"{FIRECRAWL_URL}/v2/scrape",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            content = resp.json().get("data", {}).get("markdown", "")
+            return content.strip() if content else None
+        except Exception as e:
+            logger.warning(f"Firecrawl failed for {url}: {e}")
+            return None
+
+    tags = _tags_for_url(url)
+    if tags:
+        content = _call(include_tags=tags, only_main=False)
+        if content and _is_valid_content(content):
+            return content
+        logger.info(f"  Firecrawl primary failed/invalid, trying fallback: {url}")
+
+    content = _call(include_tags=[], only_main=True)
+    return content if content and _is_valid_content(content) else None
 
 
 def _extract_json(text: str) -> dict:
