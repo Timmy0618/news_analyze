@@ -83,7 +83,9 @@ class TestTagsForUrl:
 # _is_valid_content
 # ---------------------------------------------------------------------------
 
-VALID_ARTICLE = "台灣政治新聞" * 40  # 200+ chars, 60+ Chinese characters
+_PARA = "台灣政治新聞" * 20  # 120-char prose line
+VALID_ARTICLE = f"{_PARA}\n{_PARA}\n{_PARA}"  # 3 paragraphs, passes all checks
+
 
 class TestIsValidContent:
     def test_empty_string(self):
@@ -98,10 +100,16 @@ class TestIsValidContent:
     def test_valid_article(self):
         assert _is_valid_content(VALID_ARTICLE) is True
 
+    def test_navigation_page_rejected(self):
+        # Many short lines with Chinese — passes length+Chinese but fails prose check
+        nav = "\n".join(["台灣新聞"] * 60)  # 60 short lines, ~240 chars, 240 Chinese
+        assert _is_valid_content(nav) is False
+
     def test_exactly_at_boundary(self):
-        # 200 chars, 50 Chinese chars
-        content = "政" * 50 + "a" * 150
-        assert _is_valid_content(content) is True
+        # 2 long lines, exactly 50 Chinese chars, >200 total
+        line1 = "政" * 50 + "a" * 51   # 101 chars, 50 Chinese
+        line2 = "a" * 100               # 100 chars, no Chinese
+        assert _is_valid_content(f"{line1}\n{line2}") is True
 
     def test_one_below_chinese_boundary(self):
         content = "政" * 49 + "a" * 200

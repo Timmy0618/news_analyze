@@ -53,10 +53,16 @@ def _tags_for_url(url: str) -> list[str]:
 
 
 def _is_valid_content(content: str) -> bool:
-    if len(content.strip()) < 200:
+    stripped = content.strip()
+    if len(stripped) < 200:
         return False
-    chinese_chars = sum(1 for c in content if "一" <= c <= "鿿")
-    return chinese_chars >= 50
+    chinese_chars = sum(1 for c in stripped if "一" <= c <= "鿿")
+    if chinese_chars < 50:
+        return False
+    # Navigation pages consist of short link-lines; real articles have prose paragraphs
+    lines = stripped.split("\n")
+    long_lines = [l for l in lines if len(l.strip()) > 80]
+    return len(long_lines) >= 2
 
 
 def _fetch_clusters(date_from: str, date_to: str, k: int, min_similarity: float) -> list:
@@ -146,9 +152,10 @@ def _classify_bias(llm, topic: str, side_a: str, side_b: str, content: str) -> d
 以下是新聞全文（節錄）：
 {content[:3000]}
 
-請判斷這篇文章的立場偏向，只輸出JSON（不要其他文字）：
-{{"verdict": "中立", "reasoning": "一句話說明理由"}}
-verdict 只能是以下三選一：中立 / 偏A方 / 偏B方"""
+請判斷這篇文章的立場偏向。判斷依據包括：引用哪方來源、使用何種框架描述事件、情緒化用語傾向哪方。
+只輸出JSON（不要其他文字），格式：{{"verdict": "...", "reasoning": "一句話說明理由"}}
+verdict 只能是以下三選一：中立 / 偏A方 / 偏B方
+只有文章明顯平衡報導雙方才選中立；有任何明顯傾向就選偏A方或偏B方。"""
 
     resp = llm.invoke([HumanMessage(content=prompt)])
     data = _extract_json(resp.content.strip())
