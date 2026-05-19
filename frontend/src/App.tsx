@@ -3,6 +3,7 @@ import TopicStats from './components/TopicStats'
 import SearchPage from './components/SearchPage'
 import BrowsePage from './components/BrowsePage'
 import GraphPage from './components/GraphPage'
+import BiasPage from './components/BiasPage'
 import { supabaseConfigured } from './lib/supabase'
 
 const TABS = [
@@ -10,6 +11,7 @@ const TABS = [
   { id: 'search', label: '🔍 搜尋' },
   { id: 'browse', label: '📚 瀏覽' },
   { id: 'graph', label: '🕸️ 關聯圖譜' },
+  { id: 'bias', label: '⚖️ 偏頗分析' },
 ] as const
 
 type TabId = typeof TABS[number]['id']
@@ -54,6 +56,7 @@ VITE_SUPABASE_ANON_KEY=your_anon_key`}
         {tab === 'search' && <SearchPage />}
         {tab === 'browse' && <BrowsePage />}
         {tab === 'graph' && <GraphPage />}
+        {tab === 'bias' && <BiasPage />}
       </main>
     </div>
   )

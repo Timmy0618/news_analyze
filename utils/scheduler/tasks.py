@@ -38,6 +38,15 @@ def run_embeddings(
     )
 
 
+def run_bias_analysis(
+    days_back: int = 3,
+    k: int = 10,
+    min_similarity: float = 0.65,
+):
+    from scripts.analyze_bias import run_bias_analysis as _run
+    return _run(days_back=days_back, k=k, min_similarity=min_similarity)
+
+
 def run_obsidian_export(vault_path: str) -> int:
     from datetime import date
     from scripts.export_to_obsidian import export_articles

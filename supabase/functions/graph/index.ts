@@ -6,6 +6,7 @@ interface GraphRequest {
   source?: string
   max_nodes?: number
   k?: number
+  min_similarity?: number
 }
 
 interface ArticleSummary {
@@ -119,7 +120,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body: GraphRequest = await req.json().catch(() => ({}))
-    const { date_from, date_to, source, max_nodes = 50, k: kParam = 10 } = body
+    const { date_from, date_to, source, max_nodes = 50, k: kParam = 10, min_similarity = 0 } = body
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -176,6 +177,18 @@ Deno.serve(async (req: Request) => {
       clusters.get(c)!.push(valid[i])
     }
 
+    // Filter: remove articles below min_similarity to their centroid, drop clusters < 2
+    if (min_similarity > 0) {
+      for (const [c, members] of clusters) {
+        const filtered = members.filter(m => cosineSim(m.emb, centroids[c]) >= min_similarity)
+        if (filtered.length < 2) {
+          clusters.delete(c)
+        } else {
+          clusters.set(c, filtered)
+        }
+      }
+    }
+
     // Build topic nodes
     const nodes: GraphNode[] = []
     for (const [c, members] of clusters) {
@@ -215,6 +228,8 @@ Deno.serve(async (req: Request) => {
     }
 
     // Build inter-cluster edges from cross-cluster article pairs with similarity >= 0.7
+    // Only consider articles belonging to surviving clusters (after min_similarity filter)
+    const survivingClusters = new Set(clusters.keys())
     const THRESHOLD = 0.7
     const edgeSims = new Map<string, number[]>()
 
@@ -222,6 +237,7 @@ Deno.serve(async (req: Request) => {
       for (let j = i + 1; j < valid.length; j++) {
         const ci = assignments[i], cj = assignments[j]
         if (ci === cj) continue
+        if (!survivingClusters.has(ci) || !survivingClusters.has(cj)) continue
         const sim = cosineSim(valid[i].emb, valid[j].emb)
         if (sim < THRESHOLD) continue
         const key = ci < cj ? `cluster-${ci}|cluster-${cj}` : `cluster-${cj}|cluster-${ci}`

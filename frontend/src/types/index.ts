@@ -39,3 +39,22 @@ export interface GraphData {
   nodes: GraphNode[]
   links: GraphEdge[]
 }
+
+export interface BiasArticle {
+  id: number
+  title: string
+  source_site: string
+  source_url: string
+  publish_date: string
+  verdict: string
+  reasoning: string | null
+}
+
+export interface BiasCluster {
+  id: number
+  cluster_label: string
+  side_a: string | null
+  side_b: string | null
+  article_count: number
+  articles: BiasArticle[]
+}

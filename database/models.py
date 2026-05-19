@@ -3,7 +3,7 @@
 支援 pgvector 向量搜尋
 """
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, Date, Index, JSON
+from sqlalchemy import Column, Integer, String, Text, DateTime, Date, Index, JSON, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 from pgvector.sqlalchemy import Vector
@@ -98,14 +98,55 @@ class NewsTopicStatistics(Base):
     
     def __repr__(self):
         return f"<NewsTopicStatistics(id={self.id}, date={self.analysis_date}, total_articles={self.total_articles})>"
+
+
+class TopicCluster(Base):
+    """偏頗分析：主題分群"""
+
+    __tablename__ = 'topic_clusters'
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    run_date      = Column(Date, nullable=False, comment='分析日期')
+    cluster_label = Column(String(200), nullable=False, comment='LLM 產生的主題名稱')
+    side_a        = Column(String(200), comment='立場A描述')
+    side_b        = Column(String(200), comment='立場B描述')
+    article_count = Column(Integer, default=0, comment='cluster 文章數')
+    created_at    = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index('idx_cluster_run_date', 'run_date'),
+    )
+
+    def __repr__(self):
+        return f"<TopicCluster(id={self.id}, date={self.run_date}, label='{self.cluster_label}')>"
+
+
+class ArticleBias(Base):
+    """偏頗分析：文章立場分類結果"""
+
+    __tablename__ = 'article_bias'
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    cluster_id  = Column(Integer, ForeignKey('topic_clusters.id', ondelete='CASCADE'), nullable=False)
+    article_id  = Column(Integer, ForeignKey('news_articles.id', ondelete='CASCADE'), nullable=False)
+    verdict     = Column(String(20), nullable=False, comment='neutral | side_a | side_b')
+    reasoning   = Column(Text, comment='LLM 判斷理由')
+    analyzed_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('cluster_id', 'article_id', name='uq_bias_cluster_article'),
+        Index('idx_bias_cluster_id', 'cluster_id'),
+    )
+
+    def __repr__(self):
+        return f"<ArticleBias(id={self.id}, cluster={self.cluster_id}, article={self.article_id}, verdict='{self.verdict}')>"
     
     def to_dict(self):
-        """轉換為字典格式"""
         return {
             'id': self.id,
-            'analysis_date': self.analysis_date.isoformat() if self.analysis_date else None,
-            'total_articles': self.total_articles,
-            'topics_data': self.topics_data,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'cluster_id': self.cluster_id,
+            'article_id': self.article_id,
+            'verdict': self.verdict,
+            'reasoning': self.reasoning,
+            'analyzed_at': self.analyzed_at.isoformat() if self.analyzed_at else None,
         }

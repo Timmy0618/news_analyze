@@ -185,6 +185,18 @@ def _setup_scheduler() -> Optional[BackgroundScheduler]:
         )
         logger.info("scheduler: obsidian export daily at %s:00 to %s", obsidian_hour, obsidian_vault)
 
+    bias_analysis_hour = int(os.getenv("BIAS_ANALYSIS_HOUR", "4"))
+    from utils.scheduler.tasks import run_bias_analysis
+    scheduler.add_job(
+        run_bias_analysis,
+        "cron",
+        hour=bias_analysis_hour,
+        minute=0,
+        id="bias_analysis",
+        replace_existing=True,
+    )
+    logger.info("scheduler: bias analysis daily at %s:00", bias_analysis_hour)
+
     if scheduler.get_jobs():
         scheduler.start()
         return scheduler
