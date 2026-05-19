@@ -25,7 +25,7 @@ def main():
     
     # 執行爬蟲
     try:
-        result = scraper.scrape_news(
+        scraper.scrape_news(
             num_pages=5,
             max_articles=10,
             output_file="other_news_result.json"

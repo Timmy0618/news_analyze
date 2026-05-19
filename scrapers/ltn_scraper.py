@@ -86,6 +86,19 @@ class LtnScraper(NewsScraper):
 
         return items
 
+    def scrape_page(self, url: str, tags: List[str]) -> str:
+        """Override to bypass Firecrawl: LTN has no <article> tag; uses requests instead."""
+        html = self.scrape_list_page(url)  # scrape_list_page is a generic HTTP getter here
+        if not html:
+            return ""
+        soup = BeautifulSoup(html, 'html.parser')
+        edit = soup.find('span', class_='article_edit')
+        body = soup.find('div', attrs={'itemprop': 'articleBody'}) or soup.find('div', class_='whitecon')
+        body_text = body.get_text(separator='\n', strip=True) if body else ""
+        if edit:
+            return edit.get_text(strip=True) + "\n" + body_text
+        return body_text
+
     def build_full_link(self, link: str) -> str:
         if link.startswith("http"):
             return link

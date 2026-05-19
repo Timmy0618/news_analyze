@@ -60,10 +60,10 @@ class ChinaTimesScraper(NewsScraper):
         if first_news_match:
             start_pos = max(0, first_news_match.start() - 200)
             result = content[start_pos:start_pos + 50000]
-            print(f"  ⚠ 未找到 article-list，從第一個新聞連結開始提取")
+            print("  ⚠ 未找到 article-list，從第一個新聞連結開始提取")
             return result
         
-        print(f"  ✗ 無法找到中時電子報的新聞區塊")
+        print("  ✗ 無法找到中時電子報的新聞區塊")
         return None
     
     def _news_url_pattern(self) -> str:
@@ -105,9 +105,9 @@ def main():
         )
         
         if result:
-            print(f"\n爬取完成！")
+            print("\n爬取完成！")
             print(f"找到 {len(result.get('articles', []))} 篇文章")
-            print(f"結果已儲存至: chinatimes_result.json")
+            print("結果已儲存至: chinatimes_result.json")
             
             # 儲存到資料庫
             stats = save_scraper_results_to_db(
@@ -116,7 +116,7 @@ def main():
             )
             print(f"\n資料庫儲存完成：新增 {stats['inserted']} 篇，更新 {stats['updated']} 篇")
         else:
-            print(f"\n爬取失敗：未取得結果")
+            print("\n爬取失敗：未取得結果")
         
     except Exception as e:
         print(f"錯誤: {e}")

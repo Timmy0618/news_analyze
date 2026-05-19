@@ -50,7 +50,7 @@ def filter_existing_links(links: List[Tuple[str, str]]) -> List[Tuple[str, str]]
         filtered_links = [(title, link) for title, link in links if link not in existing_urls]
         removed_count = len(links) - len(filtered_links)
 
-        print(f"✓ 資料庫檢查完成")
+        print("✓ 資料庫檢查完成")
         print(f"  - 原始連結數: {len(links)}")
         print(f"  - 已存在連結數: {removed_count}")
         print(f"  - 需處理連結數: {len(filtered_links)}")
@@ -145,7 +145,26 @@ class NewsScraper:
             data = response.json()
 
             if "data" in data and "markdown" in data["data"]:
-                return data["data"]["markdown"]
+                content = data["data"]["markdown"]
+                if content and content.strip():
+                    return content
+
+            # Fallback: if includeTags returned nothing, retry with onlyMainContent
+            if tags:
+                fallback_config = {
+                    "url": url,
+                    "formats": ["markdown"],
+                    "onlyMainContent": True
+                }
+                fallback_resp = requests.post(
+                    f"{self.firecrawl_url}/v2/scrape",
+                    json=fallback_config,
+                    headers={"Content-Type": "application/json"}
+                )
+                fallback_resp.raise_for_status()
+                fallback_data = fallback_resp.json()
+                if "data" in fallback_data and "markdown" in fallback_data["data"]:
+                    return fallback_data["data"]["markdown"]
             return ""
         except Exception as e:
             print(f"  抓取錯誤: {e}")
@@ -203,7 +222,7 @@ class NewsScraper:
         """
         # 預設實現：返回頁面中間部分作為備用
         # 建議：每個網站都應該創建子類並覆寫此方法
-        print(f"  ⚠ 使用預設 extract_news_block 方法，建議為該網站創建專用子類")
+        print("  ⚠ 使用預設 extract_news_block 方法，建議為該網站創建專用子類")
         return content[len(content)//4:len(content)*3//4]
 
     def build_full_link(self, link: str) -> str:
@@ -372,10 +391,14 @@ class NewsScraper:
         if link_m:
             return link_m.group(1).strip(), ""
 
-        # TVBS uses 編輯 [name](searchresult url) instead of /reporter/ path
-        editor_link_m = re.search(r'編輯\s+\[([^\]]{1,15})\]\(https?://[^)]+\)', content)
-        if editor_link_m:
-            return editor_link_m.group(1).strip(), ""
+        # TVBS uses 記者/編輯 [name](url) format; scope to tvbs.com.tw to avoid cross-site false positives
+        tvbs_reporter_m = re.search(r'記者\s+\[([^\]]{1,15})\]\(https?://[^.]+\.tvbs\.com\.tw[^)]*\)', content)
+        if tvbs_reporter_m:
+            return tvbs_reporter_m.group(1).strip(), ""
+
+        tvbs_editor_m = re.search(r'編輯\s+\[([^\]]{1,15})\]\(https?://[^.]+\.tvbs\.com\.tw[^)]*\)', content)
+        if tvbs_editor_m:
+            return tvbs_editor_m.group(1).strip(), ""
 
         # Firecrawl renders reporter names as markdown links [name](url); strip to plain text
         snippet = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', content)
@@ -422,7 +445,7 @@ class NewsScraper:
             os.makedirs(raw_data_dir, exist_ok=True)
             print(f"✓ 原始資料將儲存至資料夾: {raw_data_dir}")
         else:
-            print(f"✓ Debug 模式已關閉，不會儲存原始資料檔案")
+            print("✓ Debug 模式已關閉，不會儲存原始資料檔案")
 
         print("="*80)
         print(f"步驟 1: 抓取新聞列表 (日期: {date_str_full})")
