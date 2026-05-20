@@ -33,13 +33,16 @@ export default function TopicStats() {
 
       const since = new Date()
       since.setDate(since.getDate() - days)
-      const sinceStr = since.toISOString().slice(0, 10)
+      // 用本地日期避免 toISOString() UTC 時區偏移問題
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const sinceStr = `${since.getFullYear()}-${pad(since.getMonth() + 1)}-${pad(since.getDate())}`
 
       const { data: all, count } = await supabase
         .from('news_articles')
         .select('publish_date,source_site', { count: 'exact' })
         .gte('publish_date', sinceStr)
         .order('publish_date', { ascending: true })
+        .limit(5000)
 
       if (!all) { setLoading(false); return }
 
