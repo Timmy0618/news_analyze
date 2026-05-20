@@ -406,11 +406,13 @@ class NewsScraper:
         for pattern in _BYLINE_PATTERNS:
             m = re.search(pattern, snippet)
             if m:
-                reporter = m.group(0).strip()
-                # 超過 40 字元視為誤匹配，嘗試取第一個 capture group
-                if len(reporter) > 40 and m.lastindex:
-                    reporter = m.group(1).strip()
-                if reporter:
+                # Prefer named capture group when available (patterns 6, 7)
+                reporter = m.group(1).strip() if m.lastindex else m.group(0).strip()
+                # Strip 記者/編輯/撰文/文 prefixes and /地點報導 suffixes
+                reporter = re.sub(r'^(?:記者|編輯|撰文[：:]|文[／/])\s*', '', reporter)
+                reporter = re.sub(r'[／/].*$', '', reporter)
+                reporter = reporter.strip()
+                if reporter and len(reporter) <= 20:
                     return reporter, ""
 
         return "未提及", ""

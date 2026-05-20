@@ -17,20 +17,28 @@ interface SourceCount {
 
 const COLORS = ['#60a5fa', '#34d399', '#f87171', '#fbbf24', '#a78bfa', '#f472b6']
 
+const DAY_OPTIONS = [7, 14, 30, 60]
+
 export default function TopicStats() {
   const [daily, setDaily] = useState<DailyCount[]>([])
   const [bySite, setBySite] = useState<SourceCount[]>([])
   const [totalArticles, setTotalArticles] = useState(0)
   const [dateRange, setDateRange] = useState({ min: '', max: '' })
   const [loading, setLoading] = useState(true)
+  const [days, setDays] = useState(30)
 
   useEffect(() => {
     async function load() {
       setLoading(true)
 
+      const since = new Date()
+      since.setDate(since.getDate() - days)
+      const sinceStr = since.toISOString().slice(0, 10)
+
       const { data: all, count } = await supabase
         .from('news_articles')
         .select('publish_date,source_site', { count: 'exact' })
+        .gte('publish_date', sinceStr)
         .order('publish_date', { ascending: true })
 
       if (!all) { setLoading(false); return }
@@ -59,12 +67,23 @@ export default function TopicStats() {
       setLoading(false)
     }
     load()
-  }, [])
+  }, [days])
 
   if (loading) return <div className="text-gray-400 text-center py-12">載入統計中...</div>
 
   return (
     <div className="space-y-8">
+      <div className="flex justify-end gap-2">
+        {DAY_OPTIONS.map(d => (
+          <button
+            key={d}
+            onClick={() => setDays(d)}
+            className={`px-3 py-1 rounded text-sm ${days === d ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+          >
+            近 {d} 天
+          </button>
+        ))}
+      </div>
       <div className="grid grid-cols-3 gap-4">
         <div className="bg-gray-800 rounded-lg p-4 text-center">
           <div className="text-3xl font-bold text-blue-400">{totalArticles.toLocaleString()}</div>
