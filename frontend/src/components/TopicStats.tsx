@@ -33,40 +33,35 @@ export default function TopicStats() {
 
       const since = new Date()
       since.setDate(since.getDate() - days)
-      // 用本地日期避免 toISOString() UTC 時區偏移問題
       const pad = (n: number) => String(n).padStart(2, '0')
       const sinceStr = `${since.getFullYear()}-${pad(since.getMonth() + 1)}-${pad(since.getDate())}`
 
-      const { data: all, count } = await supabase
-        .from('news_articles')
-        .select('publish_date,source_site', { count: 'exact' })
-        .gte('publish_date', sinceStr)
-        .order('publish_date', { ascending: true })
-        .limit(5000)
+      const [{ data: dailyData }, { data: siteData }] = await Promise.all([
+        supabase
+          .from('news_articles')
+          .select('publish_date, count:id.count()')
+          .gte('publish_date', sinceStr)
+          .order('publish_date', { ascending: true }),
+        supabase
+          .from('news_articles')
+          .select('source_site, count:id.count()')
+          .gte('publish_date', sinceStr),
+      ])
 
-      if (!all) { setLoading(false); return }
+      if (!dailyData || !siteData) { setLoading(false); return }
 
-      setTotalArticles(count ?? 0)
+      const daily = (dailyData as { publish_date: string; count: number }[])
+      const bysite = (siteData as { source_site: string; count: number }[])
+        .sort((a, b) => b.count - a.count)
 
-      const dateMap: Record<string, number> = {}
-      const siteMap: Record<string, number> = {}
-      let minDate = '', maxDate = ''
+      const total = daily.reduce((s, r) => s + Number(r.count), 0)
+      const minDate = daily[0]?.publish_date ?? ''
+      const maxDate = daily[daily.length - 1]?.publish_date ?? ''
 
-      for (const row of all) {
-        const d = row.publish_date as string
-        dateMap[d] = (dateMap[d] ?? 0) + 1
-        siteMap[row.source_site as string] = (siteMap[row.source_site as string] ?? 0) + 1
-        if (!minDate || d < minDate) minDate = d
-        if (!maxDate || d > maxDate) maxDate = d
-      }
-
+      setTotalArticles(total)
       setDateRange({ min: minDate, max: maxDate })
-      setDaily(Object.entries(dateMap).map(([publish_date, count]) => ({ publish_date, count })))
-      setBySite(
-        Object.entries(siteMap)
-          .map(([source_site, count]) => ({ source_site, count }))
-          .sort((a, b) => b.count - a.count),
-      )
+      setDaily(daily.map(r => ({ publish_date: r.publish_date, count: Number(r.count) })))
+      setBySite(bysite.map(r => ({ source_site: r.source_site, count: Number(r.count) })))
       setLoading(false)
     }
     load()
