@@ -36,32 +36,20 @@ export default function TopicStats() {
       const pad = (n: number) => String(n).padStart(2, '0')
       const sinceStr = `${since.getFullYear()}-${pad(since.getMonth() + 1)}-${pad(since.getDate())}`
 
-      const [{ data: dailyData }, { data: siteData }] = await Promise.all([
-        supabase
-          .from('news_articles')
-          .select('publish_date, count:id.count()')
-          .gte('publish_date', sinceStr)
-          .order('publish_date', { ascending: true }),
-        supabase
-          .from('news_articles')
-          .select('source_site, count:id.count()')
-          .gte('publish_date', sinceStr),
-      ])
+      const { data, error } = await supabase.rpc('get_article_stats', { since_date: sinceStr })
 
-      if (!dailyData || !siteData) { setLoading(false); return }
+      if (error || !data) { setLoading(false); return }
 
-      const daily = (dailyData as { publish_date: string; count: number }[])
-      const bysite = (siteData as { source_site: string; count: number }[])
-        .sort((a, b) => b.count - a.count)
+      const daily: { publish_date: string; count: number }[] = data.daily ?? []
+      const bySite: { source_site: string; count: number }[] = data.by_site ?? []
 
-      const total = daily.reduce((s, r) => s + Number(r.count), 0)
-      const minDate = daily[0]?.publish_date ?? ''
-      const maxDate = daily[daily.length - 1]?.publish_date ?? ''
-
-      setTotalArticles(total)
-      setDateRange({ min: minDate, max: maxDate })
+      setTotalArticles(Number(data.total ?? 0))
+      setDateRange({
+        min: daily[0]?.publish_date ?? '',
+        max: daily[daily.length - 1]?.publish_date ?? '',
+      })
       setDaily(daily.map(r => ({ publish_date: r.publish_date, count: Number(r.count) })))
-      setBySite(bysite.map(r => ({ source_site: r.source_site, count: Number(r.count) })))
+      setBySite(bySite.map(r => ({ source_site: r.source_site, count: Number(r.count) })))
       setLoading(false)
     }
     load()
