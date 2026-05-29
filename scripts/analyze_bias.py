@@ -65,7 +65,14 @@ def _is_valid_content(content: str) -> bool:
     return len(long_lines) >= 2
 
 
-def _fetch_clusters(date_from: str, date_to: str, k: int, min_similarity: float) -> list:
+def _fetch_clusters(
+    date_from: str,
+    date_to: str,
+    k: int,
+    min_similarity: float,
+    max_nodes: int = 300,
+    seed: int = 42,
+) -> list:
     url = f"{SUPABASE_URL}/functions/v1/graph"
     headers = {
         "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
@@ -74,11 +81,13 @@ def _fetch_clusters(date_from: str, date_to: str, k: int, min_similarity: float)
     payload = {
         "date_from": date_from,
         "date_to": date_to,
-        "max_nodes": 150,
+        "max_nodes": max_nodes,
         "k": k,
         "min_similarity": min_similarity,
+        "seed": seed,
+        "restarts": 5,
     }
-    resp = requests.post(url, json=payload, headers=headers, timeout=60)
+    resp = requests.post(url, json=payload, headers=headers, timeout=120)
     resp.raise_for_status()
     return resp.json().get("nodes", [])
 
@@ -135,10 +144,15 @@ def _determine_topic_sides(llm, titles: list[str]) -> dict:
     prompt = f"""以下是同一主題的新聞標題：
 {titles_text}
 
-請以JSON格式回答（只輸出JSON，不要其他文字）：
-{{"topic": "主題名稱（15字以內）", "side_a": "立場A的描述（10字以內）", "side_b": "立場B的描述（10字以內）"}}
+先判斷這個主題是否為「有對立立場的爭議議題」（is_controversial）：
+- 政策爭論、選舉攻防、勞資對立、統獨藍綠等 → true
+- 天災、意外、體育賽事、純資訊（如股市收盤、活動預告）、無明顯對立面的事件 → false
 
-範例：{{"topic": "核電廠重啟爭議", "side_a": "支持重啟", "side_b": "反對重啟"}}"""
+請以JSON格式回答（只輸出JSON，不要其他文字）：
+{{"topic": "主題名稱（15字以內）", "is_controversial": true/false, "side_a": "立場A的描述（10字以內，非爭議可留空）", "side_b": "立場B的描述（10字以內，非爭議可留空）"}}
+
+範例1：{{"topic": "核電廠重啟爭議", "is_controversial": true, "side_a": "支持重啟", "side_b": "反對重啟"}}
+範例2：{{"topic": "花蓮地震災情", "is_controversial": false, "side_a": "", "side_b": ""}}"""
 
     resp = llm.invoke([HumanMessage(content=prompt)])
     return _extract_json(resp.content.strip())
@@ -152,16 +166,51 @@ def _classify_bias(llm, topic: str, side_a: str, side_b: str, content: str) -> d
 以下是新聞全文（節錄）：
 {content[:3000]}
 
-請判斷這篇文章的立場偏向。判斷依據包括：引用哪方來源、使用何種框架描述事件、情緒化用語傾向哪方。
-只輸出JSON（不要其他文字），格式：{{"verdict": "...", "reasoning": "一句話說明理由"}}
-verdict 只能是以下三選一：中立 / 偏A方 / 偏B方
-只有文章明顯平衡報導雙方才選中立；有任何明顯傾向就選偏A方或偏B方。"""
+請客觀判斷這篇文章的立場。判斷依據：引用哪方來源、用何種框架描述事件、情緒化用語傾向哪方。
+三類定義（請依實際內容判斷，不要預設傾向某一類）：
+- 中立：平衡呈現雙方說法，或為純事實陳述、未明顯偏袒任一方。一般如實的事件報導通常屬於中立。
+- 偏A方：明顯偏向立場A。
+- 偏B方：明顯偏向立場B。
+
+只輸出JSON（不要其他文字），格式：
+{{"verdict": "中立|偏A方|偏B方", "reasoning": "一句話說明理由", "confidence": 0.0~1.0}}
+confidence 代表你對此判斷的信心（0~1）。"""
 
     resp = llm.invoke([HumanMessage(content=prompt)])
     data = _extract_json(resp.content.strip())
     verdict_map = {"中立": "neutral", "偏A方": "side_a", "偏B方": "side_b"}
     data["verdict"] = verdict_map.get(data.get("verdict", "中立"), "neutral")
+    try:
+        conf = float(data.get("confidence"))
+        data["confidence"] = max(0.0, min(1.0, conf))
+    except (TypeError, ValueError):
+        data["confidence"] = None
     return data
+
+
+def _existing_cluster_article_ids(db, run_date) -> list[set[int]]:
+    """回傳當日每個已存在 cluster 的 article_id 集合，用於跨 cluster 去重。"""
+    rows = (
+        db.query(ArticleBias.cluster_id, ArticleBias.article_id)
+        .join(TopicCluster, TopicCluster.id == ArticleBias.cluster_id)
+        .filter(TopicCluster.run_date == run_date)
+        .all()
+    )
+    by_cluster: dict[int, set[int]] = {}
+    for cluster_id, article_id in rows:
+        by_cluster.setdefault(cluster_id, set()).add(article_id)
+    return list(by_cluster.values())
+
+
+def _overlaps_existing(new_ids: set[int], existing_sets: list[set[int]], threshold: float = 0.5) -> bool:
+    """新 cluster 的文章與任一既有 cluster 重疊比例 > threshold 則視為重複。"""
+    if not new_ids:
+        return False
+    for prev in existing_sets:
+        overlap = len(new_ids & prev) / len(new_ids)
+        if overlap > threshold:
+            return True
+    return False
 
 
 def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0.65) -> None:
@@ -175,7 +224,10 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
         logger.error("VITE_SUPABASE_URL 或 VITE_SUPABASE_ANON_KEY 未設定")
         return
 
-    clusters = _fetch_clusters(date_from, date_to, k=k, min_similarity=min_similarity)
+    max_nodes = min(300, max(80, days_back * 100))
+    clusters = _fetch_clusters(
+        date_from, date_to, k=k, min_similarity=min_similarity, max_nodes=max_nodes,
+    )
     if not clusters:
         logger.info("無分群結果，結束")
         return
@@ -184,6 +236,9 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
 
     llm = create_llm(base_url="https://api.openai.com/v1", model="gpt-4.1", temperature=0.3)
     db = Session()
+
+    # 當日既有 cluster 的文章集合（含本次新建的，逐步累加，避免每輪重查 DB）
+    existing_id_sets = _existing_cluster_article_ids(db, today)
 
     try:
         for cluster in clusters:
@@ -201,38 +256,62 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
                 continue
 
             topic = sides.get("topic", "未知主題")
-            side_a = sides.get("side_a", "立場A")
-            side_b = sides.get("side_b", "立場B")
+            side_a = sides.get("side_a") or "立場A"
+            side_b = sides.get("side_b") or "立場B"
+            is_controversial = bool(sides.get("is_controversial", True))
+            cluster_type = "controversial" if is_controversial else "informational"
 
-            # 去重：同日同主題已存在則跳過
-            existing = db.query(TopicCluster).filter_by(
-                run_date=today, cluster_label=topic
-            ).first()
-            if existing:
-                logger.info(f"Skip 已存在的 cluster: {topic}")
+            # 僅保留有 id 與 url 的文章
+            valid_articles = [a for a in articles if a.get("id") and a.get("url")]
+            new_ids = {int(a["id"]) for a in valid_articles}
+
+            # 去重：與當日任一既有 cluster 文章重疊 > 50% 視為重複
+            if _overlaps_existing(new_ids, existing_id_sets):
+                logger.info(f"Skip 重複 cluster（文章高度重疊）: {topic}")
                 continue
 
             tc = TopicCluster(
                 run_date=today,
                 cluster_label=topic,
-                side_a=side_a,
-                side_b=side_b,
+                side_a=side_a if is_controversial else None,
+                side_b=side_b if is_controversial else None,
+                cluster_type=cluster_type,
                 article_count=0,
+                attempted_count=len(valid_articles),
             )
             db.add(tc)
             db.flush()
 
-            logger.info(f"Cluster '{topic}': {side_a} vs {side_b}（{len(articles)} 篇）")
+            # 非爭議主題：全部標記 neutral，不抓全文、不呼叫 LLM 分類
+            if not is_controversial:
+                logger.info(f"Cluster '{topic}'（資訊型，{len(valid_articles)} 篇）→ 全部中立")
+                neutral_count = 0
+                for art in valid_articles:
+                    art_id = int(art["id"])
+                    if db.query(ArticleBias).filter_by(cluster_id=tc.id, article_id=art_id).first():
+                        continue
+                    db.add(ArticleBias(
+                        cluster_id=tc.id,
+                        article_id=art_id,
+                        verdict="neutral",
+                        reasoning="資訊型主題，無對立立場",
+                        confidence=None,
+                    ))
+                    neutral_count += 1
+                tc.article_count = neutral_count
+                db.commit()
+                existing_id_sets.append(new_ids)
+                logger.info(f"Cluster '{topic}' 完成（資訊型 {neutral_count} 篇）")
+                continue
 
-            # Step 2: 逐篇判斷立場
+            logger.info(f"Cluster '{topic}': {side_a} vs {side_b}（{len(valid_articles)} 篇）")
+
+            # Step 2: 爭議主題逐篇判斷立場
             bias_count = 0
-            for art in articles:
-                art_id_raw = art.get("id")
-                art_url = art.get("url", "")
-                if not art_id_raw or not art_url:
-                    continue
-
-                art_id = int(art_id_raw)
+            fetch_failed = 0
+            for art in valid_articles:
+                art_id = int(art["id"])
+                art_url = art["url"]
 
                 # 文章去重
                 if db.query(ArticleBias).filter_by(cluster_id=tc.id, article_id=art_id).first():
@@ -240,6 +319,7 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
 
                 content = _fetch_article_content(art_url)
                 if not content:
+                    fetch_failed += 1
                     logger.info(f"  Skip（無法抓取）: {art_url}")
                     continue
 
@@ -254,6 +334,7 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
                     article_id=art_id,
                     verdict=result["verdict"],
                     reasoning=result.get("reasoning", ""),
+                    confidence=result.get("confidence"),
                 ))
                 bias_count += 1
                 logger.info(f"  [{result['verdict']}] {art.get('title', '')[:50]}")
@@ -264,12 +345,13 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
             if bias_count == 0:
                 db.delete(tc)
                 db.flush()
-                logger.info(f"Cluster '{topic}' 無文章成功分析，跳過")
+                logger.info(f"Cluster '{topic}' 無文章成功分析，跳過（抓取失敗 {fetch_failed} 篇）")
                 continue
 
             tc.article_count = bias_count
             db.commit()
-            logger.info(f"Cluster '{topic}' 完成（{bias_count} 篇）")
+            existing_id_sets.append(new_ids)
+            logger.info(f"Cluster '{topic}' 完成（成功 {bias_count} / 嘗試 {len(valid_articles)} 篇，抓取失敗 {fetch_failed}）")
 
     except Exception as e:
         db.rollback()

@@ -7,6 +7,8 @@ interface GraphRequest {
   max_nodes?: number
   k?: number
   min_similarity?: number
+  seed?: number
+  restarts?: number
 }
 
 interface ArticleSummary {
@@ -52,9 +54,22 @@ function normVec(v: number[]): number[] {
   return v.map(x => x / norm)
 }
 
+// Deterministic seeded PRNG (mulberry32) so clustering is reproducible per seed.
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0
+  return function () {
+    a |= 0
+    a = (a + 0x6D2B79F5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
 function kMeansCosine(
   vectors: number[][],
   k: number,
+  rng: () => number,
   maxIter = 20,
 ): { assignments: number[]; centroids: number[][] } {
   const n = vectors.length
@@ -62,7 +77,7 @@ function kMeansCosine(
   if (k <= 1) return { assignments: new Array(n).fill(0), centroids: [normVec(vectors[0])] }
 
   // K-Means++ initialization: pick centroids biased toward distant points
-  const chosen: number[] = [Math.floor(Math.random() * n)]
+  const chosen: number[] = [Math.floor(rng() * n)]
   for (let c = 1; c < k; c++) {
     const dists = vectors.map((v, i) => {
       if (chosen.includes(i)) return 0
@@ -71,7 +86,7 @@ function kMeansCosine(
       return Math.max(0, 1 - maxSim)
     })
     const total = dists.reduce((s, d) => s + d * d, 0)
-    let rand = Math.random() * total
+    let rand = rng() * total
     let next = chosen[chosen.length - 1]
     for (let i = 0; i < n; i++) {
       rand -= dists[i] * dists[i]
@@ -113,6 +128,38 @@ function kMeansCosine(
   return { assignments, centroids }
 }
 
+// Total cosine distance of each point to its assigned centroid (lower = tighter).
+function distortion(
+  vectors: number[][],
+  assignments: number[],
+  centroids: number[][],
+): number {
+  let total = 0
+  for (let i = 0; i < vectors.length; i++) {
+    total += 1 - cosineSim(vectors[i], centroids[assignments[i]])
+  }
+  return total
+}
+
+// Run k-means several times from different seeds and keep the lowest-distortion result.
+function kMeansBestOf(
+  vectors: number[][],
+  k: number,
+  seed: number,
+  restarts: number,
+): { assignments: number[]; centroids: number[][] } {
+  let best: { assignments: number[]; centroids: number[][] } | null = null
+  let bestDist = Infinity
+  const runs = Math.max(1, restarts)
+  for (let r = 0; r < runs; r++) {
+    const rng = mulberry32(seed + r * 0x9E3779B1)
+    const res = kMeansCosine(vectors, k, rng)
+    const dist = distortion(vectors, res.assignments, res.centroids)
+    if (dist < bestDist) { bestDist = dist; best = res }
+  }
+  return best!
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -120,7 +167,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body: GraphRequest = await req.json().catch(() => ({}))
-    const { date_from, date_to, source, max_nodes = 50, k: kParam = 10, min_similarity = 0 } = body
+    const { date_from, date_to, source, max_nodes = 50, k: kParam = 10, min_similarity = 0, seed = 42, restarts = 5 } = body
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -132,7 +179,7 @@ Deno.serve(async (req: Request) => {
       .select('id,title,source_url,source_site,publish_date,reporter,title_embedding')
       .not('title_embedding', 'is', null)
       .order('publish_date', { ascending: false })
-      .limit(Math.min(max_nodes, 80))
+      .limit(Math.min(max_nodes, 300))
 
     if (date_from) q = q.gte('publish_date', date_from)
     if (date_to) q = q.lte('publish_date', date_to)
@@ -167,7 +214,7 @@ Deno.serve(async (req: Request) => {
       .filter((x): x is typeof x & { emb: number[] } => x.emb !== null)
 
     const k = Math.min(kParam, valid.length)
-    const { assignments, centroids } = kMeansCosine(valid.map(x => x.emb), k)
+    const { assignments, centroids } = kMeansBestOf(valid.map(x => x.emb), k, seed, restarts)
 
     // Group articles into clusters
     const clusters = new Map<number, typeof valid>()

@@ -56,5 +56,14 @@ export interface BiasCluster {
   side_a: string | null
   side_b: string | null
   article_count: number
+  run_date: string
   articles: BiasArticle[]
+}
+
+export interface BiasSourceStat {
+  source_site: string
+  total: number
+  neutral: number
+  partisan: number
+  partisan_rate: number
 }

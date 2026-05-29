@@ -3,7 +3,7 @@
 支援 pgvector 向量搜尋
 """
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, Date, Index, JSON, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, Float, String, Text, DateTime, Date, Index, JSON, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 from pgvector.sqlalchemy import Vector
@@ -110,7 +110,9 @@ class TopicCluster(Base):
     cluster_label = Column(String(200), nullable=False, comment='LLM 產生的主題名稱')
     side_a        = Column(String(200), comment='立場A描述')
     side_b        = Column(String(200), comment='立場B描述')
-    article_count = Column(Integer, default=0, comment='cluster 文章數')
+    cluster_type  = Column(String(20), default='controversial', comment='controversial | informational')
+    article_count = Column(Integer, default=0, comment='成功分析的文章數')
+    attempted_count = Column(Integer, default=0, comment='嘗試分析的文章數（含抓取失敗）')
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
@@ -131,6 +133,7 @@ class ArticleBias(Base):
     article_id  = Column(Integer, ForeignKey('news_articles.id', ondelete='CASCADE'), nullable=False)
     verdict     = Column(String(20), nullable=False, comment='neutral | side_a | side_b')
     reasoning   = Column(Text, comment='LLM 判斷理由')
+    confidence  = Column(Float, comment='LLM 判斷信心 0-1')
     analyzed_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
@@ -148,5 +151,6 @@ class ArticleBias(Base):
             'article_id': self.article_id,
             'verdict': self.verdict,
             'reasoning': self.reasoning,
+            'confidence': self.confidence,
             'analyzed_at': self.analyzed_at.isoformat() if self.analyzed_at else None,
         }

@@ -296,6 +296,39 @@ class TestClassifyBias:
         # The prompt should not contain more than 3000 X's
         assert "X" * 3001 not in prompt
 
+    def test_confidence_parsed_and_clamped(self):
+        llm = self._make_llm('{"verdict": "偏A方", "reasoning": "r", "confidence": 1.4}')
+        result = _classify_bias(llm, "核電", "支持", "反對", "文章內文")
+        assert result["confidence"] == 1.0
+
+    def test_confidence_missing_is_none(self):
+        llm = self._make_llm('{"verdict": "中立", "reasoning": "r"}')
+        result = _classify_bias(llm, "核電", "支持", "反對", "文章內文")
+        assert result["confidence"] is None
+
+
+# ---------------------------------------------------------------------------
+# _overlaps_existing (cross-cluster dedup helper)
+# ---------------------------------------------------------------------------
+
+class TestOverlapsExisting:
+    def test_full_overlap_is_duplicate(self):
+        from scripts.analyze_bias import _overlaps_existing
+        assert _overlaps_existing({1, 2}, [{1, 2, 3}]) is True
+
+    def test_half_overlap_not_duplicate(self):
+        from scripts.analyze_bias import _overlaps_existing
+        # 1/2 = 0.5 is NOT > 0.5
+        assert _overlaps_existing({1, 2}, [{1, 9}]) is False
+
+    def test_no_existing_not_duplicate(self):
+        from scripts.analyze_bias import _overlaps_existing
+        assert _overlaps_existing({1, 2}, []) is False
+
+    def test_empty_new_ids_not_duplicate(self):
+        from scripts.analyze_bias import _overlaps_existing
+        assert _overlaps_existing(set(), [{1, 2}]) is False
+
 
 # ---------------------------------------------------------------------------
 # run_bias_analysis (integration, all external calls mocked)
@@ -376,12 +409,16 @@ class TestRunBiasAnalysis:
         mock_db.commit.assert_not_called()
 
     def test_skips_existing_cluster(self, mock_env, mock_llm, mocker):
+        # Dedup is now by article-id overlap: an existing same-day cluster already
+        # covers articles {1, 2}, so this cluster (ids {1, 2}) overlaps 100% and is skipped.
         mocker.patch("scripts.analyze_bias._fetch_clusters", return_value=[FAKE_CLUSTER])
         mocker.patch("scripts.analyze_bias.create_llm", return_value=mock_llm)
+        mocker.patch(
+            "scripts.analyze_bias._existing_cluster_article_ids",
+            return_value=[{1, 2}],
+        )
 
         mock_db = MagicMock()
-        # Simulate existing cluster found
-        mock_db.query.return_value.filter_by.return_value.first.return_value = MagicMock()
         mocker.patch("scripts.analyze_bias.Session", return_value=mock_db)
 
         run_bias_analysis(days_back=1)
@@ -405,3 +442,29 @@ class TestRunBiasAnalysis:
         run_bias_analysis(days_back=1)
 
         mock_db.add.assert_not_called()
+
+    def test_informational_cluster_marks_neutral_without_fetch(self, mock_env, mock_llm, mocker):
+        # An informational topic must not fetch full text or call the bias classifier.
+        mocker.patch("scripts.analyze_bias._fetch_clusters", return_value=[FAKE_CLUSTER])
+        mocker.patch("scripts.analyze_bias.create_llm", return_value=mock_llm)
+        mocker.patch("scripts.analyze_bias._existing_cluster_article_ids", return_value=[])
+        mocker.patch(
+            "scripts.analyze_bias._determine_topic_sides",
+            return_value={"topic": "花蓮地震災情", "is_controversial": False, "side_a": "", "side_b": ""},
+        )
+        fetch = mocker.patch("scripts.analyze_bias._fetch_article_content")
+        classify = mocker.patch("scripts.analyze_bias._classify_bias")
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter_by.return_value.first.return_value = None
+        mocker.patch("scripts.analyze_bias.Session", return_value=mock_db)
+
+        run_bias_analysis(days_back=1)
+
+        fetch.assert_not_called()
+        classify.assert_not_called()
+        # 1 TopicCluster + 2 neutral ArticleBias rows added, then committed
+        added = [c.args[0] for c in mock_db.add.call_args_list]
+        verdicts = [getattr(a, "verdict", None) for a in added]
+        assert verdicts.count("neutral") == 2
+        mock_db.commit.assert_called()

@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import type { BiasCluster } from '../types'
+import type { BiasCluster, BiasSourceStat } from '../types'
 
 const VERDICTS = ['side_a', 'neutral', 'side_b'] as const
 type Verdict = typeof VERDICTS[number]
@@ -9,6 +9,23 @@ const VERDICT: Record<Verdict, { label: string; bar: string; text: string }> = {
   side_a:  { label: '偏A方', bar: 'bg-blue-500',   text: 'text-blue-400' },
   neutral: { label: '中立',  bar: 'bg-gray-400',   text: 'text-gray-400' },
   side_b:  { label: '偏B方', bar: 'bg-orange-500', text: 'text-orange-400' },
+}
+
+const DAY_OPTIONS = [3, 7, 14, 30]
+
+function pad(n: number) {
+  return String(n).padStart(2, '0')
+}
+
+function isoDaysAgo(days: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() - days)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function todayIso(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
 function BiasBar({ articles }: { articles: BiasCluster['articles'] }) {
@@ -46,6 +63,33 @@ function BiasBar({ articles }: { articles: BiasCluster['articles'] }) {
   )
 }
 
+function SourceBiasPanel({ stats }: { stats: BiasSourceStat[] }) {
+  if (stats.length === 0) return null
+  return (
+    <div className="bg-gray-800 rounded-lg p-4 space-y-3">
+      <div className="text-sm font-medium text-gray-300">媒體黨派率（被判定為偏向某方的比例）</div>
+      <div className="space-y-2">
+        {stats.map((s) => {
+          const pct = Math.round((s.partisan_rate ?? 0) * 100)
+          return (
+            <div key={s.source_site} className="flex items-center gap-3">
+              <div className="w-24 shrink-0 text-xs text-gray-400 truncate" title={s.source_site}>
+                {s.source_site}
+              </div>
+              <div className="flex-1 bg-gray-700 rounded h-3 overflow-hidden">
+                <div className="bg-orange-500 h-full" style={{ width: `${pct}%` }} />
+              </div>
+              <div className="w-20 shrink-0 text-right text-xs text-gray-400">
+                {pct}%（{s.partisan}/{s.total}）
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function ClusterCard({ cluster }: { cluster: BiasCluster }) {
   const [expanded, setExpanded] = useState(false)
 
@@ -55,18 +99,29 @@ function ClusterCard({ cluster }: { cluster: BiasCluster }) {
     side_b: cluster.articles.filter((a) => a.verdict === 'side_b'),
   }
 
+  const hasSides = !!(cluster.side_a || cluster.side_b)
+
   return (
     <div className="bg-gray-800 rounded-lg p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="font-medium text-white">{cluster.cluster_label}</div>
-          <div className="text-xs text-gray-400 mt-0.5">
-            A方：<span className="text-blue-400">{cluster.side_a}</span>
-            {' '}｜{' '}
-            B方：<span className="text-orange-400">{cluster.side_b}</span>
-          </div>
+          {hasSides ? (
+            <div className="text-xs text-gray-400 mt-0.5">
+              A方：<span className="text-blue-400">{cluster.side_a}</span>
+              {' '}｜{' '}
+              B方：<span className="text-orange-400">{cluster.side_b}</span>
+            </div>
+          ) : (
+            <div className="text-xs text-gray-500 mt-0.5">資訊型主題（無對立立場）</div>
+          )}
         </div>
-        <span className="text-xs text-gray-500 shrink-0">{cluster.article_count} 篇</span>
+        <div className="flex flex-col items-end shrink-0">
+          <span className="text-xs text-gray-500">{cluster.article_count} 篇</span>
+          {cluster.run_date && (
+            <span className="text-[10px] text-gray-600 mt-0.5">{cluster.run_date}</span>
+          )}
+        </div>
       </div>
 
       <BiasBar articles={cluster.articles} />
@@ -118,58 +173,80 @@ function ClusterCard({ cluster }: { cluster: BiasCluster }) {
 
 export default function BiasPage() {
   const [clusters, setClusters] = useState<BiasCluster[]>([])
+  const [sourceStats, setSourceStats] = useState<BiasSourceStat[]>([])
   const [runDate, setRunDate] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState('')
+  const [days, setDays] = useState(7)
 
-  async function load() {
+  const load = useCallback(async (d: number) => {
     setLoading(true)
     setError('')
 
-    const { data, error: fnErr } = await supabase.functions.invoke<{
-      run_date: string | null
-      clusters: BiasCluster[]
-    }>('bias', { body: {} })
+    const dateFrom = isoDaysAgo(d)
+    const dateTo = todayIso()
+
+    const [fn, rpc] = await Promise.all([
+      supabase.functions.invoke<{
+        run_date: string | null
+        clusters: BiasCluster[]
+      }>('bias', { body: { date_from: dateFrom, date_to: dateTo } }),
+      supabase.rpc('get_bias_stats', { date_from: dateFrom, date_to: dateTo }),
+    ])
 
     setLoading(false)
-    if (fnErr) {
-      setError(`載入失敗: ${fnErr.message}`)
-    } else if (data) {
-      setRunDate(data.run_date)
-      setClusters(data.clusters ?? [])
+    setLoaded(true)
+    if (fn.error) {
+      setError(`載入失敗: ${fn.error.message}`)
+      return
     }
-  }
+    if (fn.data) {
+      setRunDate(fn.data.run_date)
+      setClusters(fn.data.clusters ?? [])
+    }
+    setSourceStats(rpc.error || !rpc.data ? [] : (rpc.data as BiasSourceStat[]))
+  }, [])
+
+  useEffect(() => {
+    load(days)
+  }, [days, load])
 
   return (
     <div className="space-y-4">
-      <div className="bg-gray-800 rounded-lg p-4 flex items-center gap-4">
-        <button
-          onClick={load}
-          disabled={loading}
-          className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white px-4 py-1.5 rounded text-sm"
-        >
-          {loading ? '載入中...' : '⚖️ 載入偏頗分析'}
-        </button>
-        {runDate && (
-          <span className="text-xs text-gray-400">最新分析日期：{runDate}</span>
-        )}
+      <div className="bg-gray-800 rounded-lg p-4 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2">
+          {DAY_OPTIONS.map((d) => (
+            <button
+              key={d}
+              onClick={() => setDays(d)}
+              disabled={loading}
+              className={`px-3 py-1 rounded text-sm disabled:opacity-40 ${
+                days === d ? 'bg-indigo-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              近 {d} 天
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-gray-400">
+          {loading ? '載入中...' : runDate ? `最新分析日期：${runDate}` : ''}
+        </span>
       </div>
 
       {error && (
         <div className="text-red-400 text-sm bg-red-900/20 rounded p-3">{error}</div>
       )}
 
-      {!loading && clusters.length === 0 && runDate === null && (
-        <div className="text-gray-400 text-center py-12">點「載入偏頗分析」查看最新結果</div>
-      )}
+      <SourceBiasPanel stats={sourceStats} />
 
-      {!loading && clusters.length === 0 && runDate !== null && (
-        <div className="text-gray-400 text-center py-12">尚無分析資料</div>
+      {!loading && loaded && clusters.length === 0 && (
+        <div className="text-gray-400 text-center py-12">此區間尚無分析資料</div>
       )}
 
       <div className="space-y-3">
         {clusters.map((c) => (
-          <ClusterCard key={c.id} cluster={c} />
+          <ClusterCard key={`${c.run_date}-${c.id}`} cluster={c} />
         ))}
       </div>
     </div>
