@@ -102,7 +102,10 @@ services:
       rabbitmq:
         condition: service_healthy
     ports:
-      - "${PORT:-3002}:${INTERNAL_PORT:-3002}"
+      # Bind to the docker bridge gateway only, not 0.0.0.0.
+      # Reachable from the host and from containers (news_api uses host-gateway=172.17.0.1),
+      # but NOT routable from the external LAN. Override with BIND_IP if your bridge differs.
+      - "${BIND_IP:-172.17.0.1}:${PORT:-3002}:${INTERNAL_PORT:-3002}"
     command: node dist/src/harness.js --start-docker
     # Resource limits for Docker Compose (not Swarm)
     # Increase if you have more CPU cores/RAM available
