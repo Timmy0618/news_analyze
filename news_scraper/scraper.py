@@ -72,6 +72,13 @@ _BYLINE_PATTERNS = [
     r'編輯\s+([^\s\n|｜，,]{1,10})',
 ]
 
+# Words that appear in "XX中心／○○報導" bylines but are NOT personal names
+# (e.g. 即時新聞／綜合報導, 政治中心／外電報導) — these mean the piece is unsigned.
+_GENERIC_DESK_WORDS = {
+    '綜合', '即時', '外電', '編譯', '本報', '中央社', '地方', '國際',
+    '財經', '生活', '社會', '政治', '娛樂', '體育', '大陸', '中心', '新聞',
+}
+
 
 class NewsScraperConfig:
     """新聞爬蟲配置類"""
@@ -402,6 +409,18 @@ class NewsScraper:
 
         # Firecrawl renders reporter names as markdown links [name](url); strip to plain text
         snippet = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', content)
+
+        # Desk byline "XX中心／姓名報導" or "XX新聞／姓名報導": the real reporter is the
+        # name *after* the slash, not the desk. Works for any desk prefix (e.g. 大陸中心)
+        # and skips unsigned pieces where the token is generic (綜合/即時/外電…).
+        desk_m = re.search(
+            r'(?:中心|新聞)[／/]([一-鿿]{2,4})(?:[／/][一-鿿]{0,8})?報導',
+            snippet,
+        )
+        if desk_m:
+            name = desk_m.group(1).strip()
+            if name and name not in _GENERIC_DESK_WORDS:
+                return name, ""
 
         for pattern in _BYLINE_PATTERNS:
             m = re.search(pattern, snippet)

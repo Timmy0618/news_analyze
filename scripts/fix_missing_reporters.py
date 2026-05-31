@@ -3,6 +3,7 @@
 用法: uv run python scripts/fix_missing_reporters.py [--limit N] [--dry-run] [--site SITE]
 """
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -18,7 +19,7 @@ from scrapers.ltn_scraper import LtnScraper
 from scrapers.setn_scraper import SetnScraper
 from scrapers.tvbs_scraper import TvbsScraper
 
-FIRECRAWL_URL = "http://localhost:3002"
+FIRECRAWL_URL = os.getenv("FIRECRAWL_URL", "http://localhost:3002")
 
 SCRAPER_MAP = {
     "自由時報": LtnScraper,
