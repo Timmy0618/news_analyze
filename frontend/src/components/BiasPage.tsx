@@ -90,6 +90,28 @@ function SourceBiasPanel({ stats }: { stats: BiasSourceStat[] }) {
   )
 }
 
+function MediaCounts({ articles }: { articles: BiasCluster['articles'] }) {
+  const counts = new Map<string, number>()
+  for (const a of articles) {
+    counts.set(a.source_site, (counts.get(a.source_site) ?? 0) + 1)
+  }
+  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1])
+  if (sorted.length === 0) return null
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {sorted.map(([site, n]) => (
+        <span
+          key={site}
+          className="text-xs bg-gray-700 text-gray-300 rounded px-2 py-0.5"
+        >
+          {site} <span className="text-white font-medium">{n}</span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function ClusterCard({ cluster }: { cluster: BiasCluster }) {
   const [expanded, setExpanded] = useState(false)
 
@@ -125,6 +147,11 @@ function ClusterCard({ cluster }: { cluster: BiasCluster }) {
       </div>
 
       <BiasBar articles={cluster.articles} />
+
+      <div className="space-y-1.5">
+        <div className="text-xs text-gray-500">各媒體報導數</div>
+        <MediaCounts articles={cluster.articles} />
+      </div>
 
       <button
         onClick={() => setExpanded((e) => !e)}
@@ -203,7 +230,11 @@ export default function BiasPage() {
     }
     if (fn.data) {
       setRunDate(fn.data.run_date)
-      setClusters(fn.data.clusters ?? [])
+      const sorted = [...(fn.data.clusters ?? [])].sort((a, b) => {
+        const d = (b.run_date ?? '').localeCompare(a.run_date ?? '')
+        return d !== 0 ? d : b.article_count - a.article_count
+      })
+      setClusters(sorted)
     }
     setSourceStats(rpc.error || !rpc.data ? [] : (rpc.data as BiasSourceStat[]))
   }, [])
