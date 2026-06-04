@@ -17,9 +17,9 @@ from typing import Optional, Sequence
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from sqlalchemy.orm import load_only
 
 from database.config import get_db
 from database.models import NewsArticle
@@ -89,7 +89,20 @@ def export_articles(
     """Export articles to Obsidian vault. Returns count of exported files."""
     db = next(get_db())
     try:
-        query = db.query(NewsArticle)
+        # 只載入用得到的欄位 + title_embedding（給 _build_related_map 算相似度），
+        # 不拉 summary_embedding（從未使用）與 summary 文字——避免每次匯出把 1024 維
+        # 向量整批拉下來，大幅降低 egress。
+        query = db.query(NewsArticle).options(
+            load_only(
+                NewsArticle.id,
+                NewsArticle.title,
+                NewsArticle.publish_date,
+                NewsArticle.source_site,
+                NewsArticle.source_url,
+                NewsArticle.reporter,
+                NewsArticle.title_embedding,
+            )
+        )
         if date_from:
             query = query.filter(NewsArticle.publish_date >= date_from)
         if date_to:

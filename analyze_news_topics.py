@@ -1,9 +1,8 @@
 import json
 import sys
-import os
 from datetime import datetime, date
 from typing import List, Dict, Any, Tuple
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 from sqlalchemy import text
 
 from database.config import get_db
@@ -57,7 +56,10 @@ def get_news_titles_by_date(target_date: date) -> List[str]:
 
     try:
         # 查詢指定日期的新聞
-        articles = db.query(NewsArticle).filter(
+        # 只載入 title，不拉 1024 維向量欄位（本函式僅用到標題），降低 egress。
+        articles = db.query(NewsArticle).options(
+            load_only(NewsArticle.title)
+        ).filter(
             NewsArticle.publish_date == target_date
         ).all()
 
@@ -359,13 +361,13 @@ def main():
                 topics_data=analysis_result["topics"]  # 建議直接存 list
             )
             if success:
-                print(f"\n✓ 分析結果已儲存到資料庫")
+                print("\n✓ 分析結果已儲存到資料庫")
             else:
-                print(f"\n✗ 儲存分析結果到資料庫失敗")
+                print("\n✗ 儲存分析結果到資料庫失敗")
         except Exception as e:
             print(f"\n✗ 儲存分析結果時發生錯誤: {str(e)}")
     else:
-        print(f"\n⚠ 分析失敗，跳過資料庫儲存")
+        print("\n⚠ 分析失敗，跳過資料庫儲存")
 
 
 if __name__ == "__main__":

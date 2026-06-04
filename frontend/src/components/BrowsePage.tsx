@@ -29,7 +29,7 @@ export default function BrowsePage() {
     setLoading(true)
     let q = supabase
       .from('news_articles')
-      .select('id,title,summary,source_url,source_site,publish_date,reporter', { count: 'exact' })
+      .select('id,title,source_url,source_site,publish_date,reporter', { count: 'exact' })
       .order(sortBy, { ascending: false })
       .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
 

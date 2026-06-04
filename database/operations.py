@@ -323,7 +323,6 @@ def search_articles_vector(
         搜尋結果列表，每個項目包含文章資訊和相似度分數
     """
     from sqlalchemy import text
-    import numpy as np
 
     # 這裡需要生成查詢向量 - 我們需要從外部獲取
     # 假設我們有一個函數來生成嵌入向量
@@ -454,7 +453,8 @@ def search_articles_keyword(
     Returns:
         搜尋結果列表
     """
-    from sqlalchemy import or_, and_
+    from sqlalchemy import or_
+    from sqlalchemy.orm import load_only
 
     should_close_session = False
     if db_session is None:
@@ -462,8 +462,18 @@ def search_articles_keyword(
         should_close_session = True
 
     try:
-        # 建立查詢
-        q = db_session.query(NewsArticle)
+        # 建立查詢（只載入結果用得到的欄位，排除兩個 1024 維向量欄位，降低 egress）
+        q = db_session.query(NewsArticle).options(
+            load_only(
+                NewsArticle.id,
+                NewsArticle.title,
+                NewsArticle.reporter,
+                NewsArticle.summary,
+                NewsArticle.source_url,
+                NewsArticle.source_site,
+                NewsArticle.publish_date,
+            )
+        )
 
         # 添加搜尋條件
         search_conditions = []

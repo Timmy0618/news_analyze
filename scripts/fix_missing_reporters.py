@@ -11,6 +11,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from database.config import Session
+from sqlalchemy.orm import load_only
+
 from database.models import NewsArticle
 from news_scraper.scraper import NewsScraper, NewsScraperConfig
 from scrapers.cna_scraper import CnaScraper
@@ -45,7 +47,17 @@ def main():
     args = parser.parse_args()
 
     session = Session()
-    query = session.query(NewsArticle).filter(NewsArticle.reporter == "未提及")
+    # 只載入需要的欄位（仍是可變的 ORM 物件，稍後寫回 article.reporter），
+    # 不拉兩個 1024 維向量欄位，降低 egress。
+    query = session.query(NewsArticle).options(
+        load_only(
+            NewsArticle.id,
+            NewsArticle.source_site,
+            NewsArticle.title,
+            NewsArticle.source_url,
+            NewsArticle.reporter,
+        )
+    ).filter(NewsArticle.reporter == "未提及")
     if args.site:
         query = query.filter(NewsArticle.source_site == args.site)
     if args.limit:
