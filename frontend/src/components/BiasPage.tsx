@@ -91,21 +91,38 @@ function SourceBiasPanel({ stats }: { stats: BiasSourceStat[] }) {
 }
 
 function MediaCounts({ articles }: { articles: BiasCluster['articles'] }) {
-  const counts = new Map<string, number>()
+  const counts = new Map<string, { total: number; side_a: number; neutral: number; side_b: number }>()
   for (const a of articles) {
-    counts.set(a.source_site, (counts.get(a.source_site) ?? 0) + 1)
+    let c = counts.get(a.source_site)
+    if (!c) {
+      c = { total: 0, side_a: 0, neutral: 0, side_b: 0 }
+      counts.set(a.source_site, c)
+    }
+    c.total++
+    if (a.verdict in c) c[a.verdict as Verdict]++
   }
-  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1])
+  const sorted = [...counts.entries()].sort((a, b) => b[1].total - a[1].total)
   if (sorted.length === 0) return null
 
   return (
     <div className="flex flex-wrap gap-1.5">
-      {sorted.map(([site, n]) => (
+      {sorted.map(([site, c]) => (
         <span
           key={site}
-          className="text-xs bg-gray-700 text-gray-300 rounded px-2 py-0.5"
+          className="text-xs bg-gray-700 text-gray-300 rounded px-2 py-0.5 flex items-center gap-1.5"
+          title={`${site}：偏A方 ${c.side_a}、中立 ${c.neutral}、偏B方 ${c.side_b}`}
         >
-          {site} <span className="text-white font-medium">{n}</span>
+          <span>{site}</span>
+          <span className="text-white font-medium">{c.total}</span>
+          <span className="flex items-center gap-1 text-[10px]">
+            {VERDICTS.map((v) =>
+              c[v] > 0 ? (
+                <span key={v} className={VERDICT[v].text}>
+                  {VERDICT[v].label.replace('方', '')}{c[v]}
+                </span>
+              ) : null
+            )}
+          </span>
         </span>
       ))}
     </div>
