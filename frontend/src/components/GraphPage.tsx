@@ -3,7 +3,8 @@ import { supabase } from '../lib/supabase'
 import type { GraphData, GraphNode } from '../types'
 import ForceGraph2D from 'react-force-graph-2d'
 
-const PALETTE = ['#60a5fa', '#34d399', '#f87171', '#fbbf24', '#a78bfa', '#f472b6', '#fb923c', '#22d3ee']
+// Editorial Ink data-viz palette (warm, distinct on graphite).
+const PALETTE = ['#eab308', '#dc2626', '#2563eb', '#0d9488', '#c2851a', '#ea580c', '#84cc16', '#a8a29e']
 
 export default function GraphPage() {
   const [graphData, setGraphData] = useState<GraphData | null>(null)
@@ -107,7 +108,7 @@ export default function GraphPage() {
               nodeVal={(n) => (n as GraphNode).article_count}
               nodeRelSize={4}
               linkColor={() => 'rgba(255,255,255,0.15)'}
-              backgroundColor="#111827"
+              backgroundColor="#15140e"
               onNodeClick={handleNodeClick}
             />
           </div>

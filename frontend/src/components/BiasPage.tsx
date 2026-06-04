@@ -5,10 +5,12 @@ import type { BiasCluster, BiasSourceStat } from '../types'
 const VERDICTS = ['side_a', 'neutral', 'side_b'] as const
 type Verdict = typeof VERDICTS[number]
 
+// Editorial Ink keeps a classic blue-vs-red bias dichotomy, pinned to
+// fixed hex so it stays independent of the gold/red theme remap.
 const VERDICT: Record<Verdict, { label: string; bar: string; text: string }> = {
-  side_a:  { label: '偏A方', bar: 'bg-blue-500',   text: 'text-blue-400' },
-  neutral: { label: '中立',  bar: 'bg-gray-400',   text: 'text-gray-400' },
-  side_b:  { label: '偏B方', bar: 'bg-orange-500', text: 'text-orange-400' },
+  side_a:  { label: '偏A方', bar: 'bg-[#2563eb]', text: 'text-[#60a5fa]' },
+  neutral: { label: '中立',  bar: 'bg-[#a8a29e]', text: 'text-[#a8a29e]' },
+  side_b:  { label: '偏B方', bar: 'bg-[#dc2626]', text: 'text-[#ef4444]' },
 }
 
 const DAY_OPTIONS = [3, 7, 14, 30]
@@ -147,9 +149,9 @@ function ClusterCard({ cluster }: { cluster: BiasCluster }) {
           <div className="font-medium text-white">{cluster.cluster_label}</div>
           {hasSides ? (
             <div className="text-xs text-gray-400 mt-0.5">
-              A方：<span className="text-blue-400">{cluster.side_a}</span>
+              A方：<span className="text-[#60a5fa]">{cluster.side_a}</span>
               {' '}｜{' '}
-              B方：<span className="text-orange-400">{cluster.side_b}</span>
+              B方：<span className="text-[#ef4444]">{cluster.side_b}</span>
             </div>
           ) : (
             <div className="text-xs text-gray-500 mt-0.5">資訊型主題（無對立立場）</div>

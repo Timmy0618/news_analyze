@@ -1,1 +1,64 @@
 @import "tailwindcss";
+
+/* =============================================================
+   News Analyze — "Editorial Ink" palette
+   From the News Analyze design system color exploration (scheme C):
+   a warm-graphite, newspaper-authoritative dark theme. Gold is the
+   brand primary; the media-bias views keep a classic blue-vs-red
+   dichotomy (pinned to fixed hex in BiasPage so they survive the
+   blue→gold remap below).
+
+   Implementation note: the app only ever used Tailwind default color
+   utilities, so re-skinning is done entirely by overriding the color
+   tokens here — `bg-gray-900`, `bg-blue-600`, etc. keep their class
+   names but render the new palette. Chart/graph hex arrays that can't
+   be expressed as utilities are updated in the component source.
+   ============================================================= */
+@theme {
+  /* ---- Neutral: warm graphite (base #15140e → cream #f6f1e6) ---- */
+  --color-gray-950: #0e0d09;
+  --color-gray-900: #15140e; /* app base                         */
+  --color-gray-800: #211e16; /* panel / card surface             */
+  --color-gray-700: #3a3328; /* raised: secondary buttons, pills */
+  --color-gray-600: #4a4234; /* borders, list rails              */
+  --color-gray-500: #6b6250; /* muted dividers / IDs             */
+  --color-gray-400: #897f6b; /* secondary / meta text            */
+  --color-gray-300: #c3b9a4; /* primary body text                */
+  --color-gray-200: #ddd5c6;
+  --color-gray-100: #eee8db;
+  --color-gray-50:  #f6f1e6; /* cream headings tint              */
+
+  /* ---- Brand primary: gold (remaps blue) ---------------------- */
+  --color-blue-700: #b8870f;
+  --color-blue-600: #d4a017; /* primary button                   */
+  --color-blue-500: #eab308; /* hover / focus ring               */
+  --color-blue-400: #fbbf24; /* links, active nav, key figures   */
+  --color-blue-300: #fcd34d; /* link hover (lighter)             */
+
+  /* ---- Secondary accents → gold (indigo / purple actions) ----- */
+  --color-indigo-600: #d4a017;
+  --color-indigo-500: #eab308;
+  --color-purple-600: #d4a017;
+  --color-purple-500: #eab308;
+  --color-purple-400: #fbbf24;
+  --color-purple-300: #fcd34d;
+
+  /* ---- Warning / date highlight: burnt amber (remaps yellow) --- */
+  --color-yellow-900: #5a2207;
+  --color-yellow-600: #ea580c; /* warn border                    */
+  --color-yellow-400: #fb923c; /* date-range highlight           */
+  --color-yellow-300: #fdba74;
+  --color-yellow-200: #fed7aa;
+
+  /* ---- Bias "B side" / partisan: red (remaps orange) ---------- */
+  --color-orange-600: #b91c1c;
+  --color-orange-500: #dc2626;
+  --color-orange-400: #ef4444;
+
+  /* ---- Positive / similarity / source: lime (remaps green) ---- */
+  --color-green-600: #65a30d;
+  --color-green-500: #84cc16;
+  --color-green-400: #a3e635;
+
+  /* red (errors) left at Tailwind defaults — already #dc2626-ish */
+}

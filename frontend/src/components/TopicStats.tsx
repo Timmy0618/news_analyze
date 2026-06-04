@@ -15,7 +15,8 @@ interface SourceCount {
   count: number
 }
 
-const COLORS = ['#60a5fa', '#34d399', '#f87171', '#fbbf24', '#a78bfa', '#f472b6']
+// Editorial Ink data-viz palette (warm, distinct on graphite).
+const COLORS = ['#eab308', '#dc2626', '#2563eb', '#0d9488', '#c2851a', '#ea580c']
 
 const DAY_OPTIONS = [7, 14, 30, 60]
 
@@ -90,11 +91,11 @@ export default function TopicStats() {
         <h3 className="text-sm font-medium text-gray-300 mb-4">每日文章數量</h3>
         <ResponsiveContainer width="100%" height={240}>
           <LineChart data={daily}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-            <XAxis dataKey="publish_date" tick={{ fill: '#9ca3af', fontSize: 11 }} />
-            <YAxis tick={{ fill: '#9ca3af', fontSize: 11 }} />
-            <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none' }} />
-            <Line type="monotone" dataKey="count" stroke="#60a5fa" dot={false} strokeWidth={2} name="篇數" />
+            <CartesianGrid strokeDasharray="3 3" stroke="#3a3328" />
+            <XAxis dataKey="publish_date" tick={{ fill: '#897f6b', fontSize: 11 }} />
+            <YAxis tick={{ fill: '#897f6b', fontSize: 11 }} />
+            <Tooltip contentStyle={{ backgroundColor: '#211e16', border: 'none' }} />
+            <Line type="monotone" dataKey="count" stroke="#eab308" dot={false} strokeWidth={2} name="篇數" />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -103,10 +104,10 @@ export default function TopicStats() {
         <h3 className="text-sm font-medium text-gray-300 mb-4">各來源文章數</h3>
         <ResponsiveContainer width="100%" height={240}>
           <BarChart data={bySite}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-            <XAxis dataKey="source_site" tick={{ fill: '#9ca3af', fontSize: 11 }} />
-            <YAxis tick={{ fill: '#9ca3af', fontSize: 11 }} />
-            <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none' }} />
+            <CartesianGrid strokeDasharray="3 3" stroke="#3a3328" />
+            <XAxis dataKey="source_site" tick={{ fill: '#897f6b', fontSize: 11 }} />
+            <YAxis tick={{ fill: '#897f6b', fontSize: 11 }} />
+            <Tooltip contentStyle={{ backgroundColor: '#211e16', border: 'none' }} />
             <Bar dataKey="count" name="篇數">
               {bySite.map((_, i) => (
                 <Cell key={i} fill={COLORS[i % COLORS.length]} />
