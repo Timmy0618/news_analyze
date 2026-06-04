@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 # 添加專案根目錄到 Python 路徑
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from sqlalchemy import and_, or_, update
+
 from database.models import NewsArticle
 from database.config import Session
 from utils.logger import get_logger
@@ -57,20 +59,34 @@ def generate_embeddings_for_articles(
     db = Session()
     
     try:
-        # 查詢需要生成嵌入的文章
+        # 查詢需要生成嵌入的文章。
+        # 注意：只 SELECT id/title/summary 與兩個「是否缺向量」旗標，不拉 title_embedding /
+        # summary_embedding（1024 維）本身——避免每次排程把整批既有向量拉下來，大幅降低 egress。
+        need_title = NewsArticle.title_embedding.is_(None)
+        need_summary = NewsArticle.summary_embedding.is_(None)
+
+        query = db.query(
+            NewsArticle.id,
+            NewsArticle.title,
+            NewsArticle.summary,
+            need_title.label("need_title"),
+            need_summary.label("need_summary"),
+        )
         if force_update:
-            query = db.query(NewsArticle)
             print(f"模式: 強制更新所有文章")
         else:
-            query = db.query(NewsArticle).filter(
-                (NewsArticle.title_embedding.is_(None)) | 
-                (NewsArticle.summary_embedding.is_(None))
+            # 僅匹配「真的缺向量且有對應文字」的列；summary 全為空時不會再被無謂選中。
+            query = query.filter(
+                or_(
+                    and_(need_title, NewsArticle.title.isnot(None), NewsArticle.title != ""),
+                    and_(need_summary, NewsArticle.summary.isnot(None), NewsArticle.summary != ""),
+                )
             )
             print(f"模式: 只處理缺少嵌入的文章")
-        
+
         if limit:
             query = query.limit(limit)
-        
+
         articles = query.all()
         total_articles = len(articles)
         
@@ -109,17 +125,14 @@ def generate_embeddings_for_articles(
             summary_indices = []
             
             for idx, article in enumerate(batch_articles):
-                # 檢查是否需要生成標題嵌入
-                if force_update or article.title_embedding is None:
-                    if article.title:
-                        titles.append(article.title)
-                        title_indices.append(idx)
-                
-                # 檢查是否需要生成摘要嵌入
-                if force_update or article.summary_embedding is None:
-                    if article.summary:
-                        summaries.append(article.summary)
-                        summary_indices.append(idx)
+                # 依查詢回傳的旗標決定是否需要生成（不讀取向量欄位本身）
+                if (force_update or article.need_title) and article.title:
+                    titles.append(article.title)
+                    title_indices.append(idx)
+
+                if (force_update or article.need_summary) and article.summary:
+                    summaries.append(article.summary)
+                    summary_indices.append(idx)
             
             # 生成標題嵌入
             title_embeddings = []
@@ -149,33 +162,36 @@ def generate_embeddings_for_articles(
                     print(f"  ✗ {error_msg}")
                     logger.error(error_msg, exc_info=True)
             
-            # 更新資料庫
+            # 更新資料庫（以 UPDATE ... WHERE id 寫回，不載入含向量的 ORM 物件）
             for idx, article in enumerate(batch_articles):
                 try:
-                    updated = False
-                    
+                    values = {}
+
                     # 更新標題嵌入
                     if idx in title_indices:
                         embedding_idx = title_indices.index(idx)
                         if embedding_idx < len(title_embeddings):
-                            article.title_embedding = title_embeddings[embedding_idx]
-                            stats["title_generated"] += 1
-                            updated = True
-                    
+                            values["title_embedding"] = title_embeddings[embedding_idx]
+
                     # 更新摘要嵌入
                     if idx in summary_indices:
                         embedding_idx = summary_indices.index(idx)
                         if embedding_idx < len(summary_embeddings):
-                            article.summary_embedding = summary_embeddings[embedding_idx]
-                            stats["summary_generated"] += 1
-                            updated = True
-                    
-                    if updated:
+                            values["summary_embedding"] = summary_embeddings[embedding_idx]
+
+                    if values:
+                        db.execute(
+                            update(NewsArticle).where(NewsArticle.id == article.id).values(**values)
+                        )
                         db.commit()
+                        if "title_embedding" in values:
+                            stats["title_generated"] += 1
+                        if "summary_embedding" in values:
+                            stats["summary_generated"] += 1
                         stats["success"] += 1
                         print(f"  ✓ 已更新: {article.title[:50]}...")
                         logger.debug(f"已更新文章 {article.id}: {article.title[:50]}")
-                    
+
                 except Exception as e:
                     db.rollback()
                     stats["failed"] += 1

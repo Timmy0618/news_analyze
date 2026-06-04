@@ -17,14 +17,11 @@ export default function BrowsePage() {
   const [sortBy, setSortBy] = useState<'publish_date' | 'source_site'>('publish_date')
 
   useEffect(() => {
+    // 用伺服器端 RPC 取得不重複來源，避免把全表的 source_site 拉到前端（省 egress）
     supabase
-      .from('news_articles')
-      .select('source_site')
+      .rpc('get_distinct_sources')
       .then(({ data }) => {
-        if (data) {
-          const unique = [...new Set(data.map((r) => r.source_site as string))].sort()
-          setSources(unique)
-        }
+        if (data) setSources(data as string[])
       })
   }, [])
 
