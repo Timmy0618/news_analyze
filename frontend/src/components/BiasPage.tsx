@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { FiChevronUp, FiChevronDown } from 'react-icons/fi'
 import { supabase } from '../lib/supabase'
 import type { BiasCluster, BiasSourceStat } from '../types'
 
@@ -174,9 +175,9 @@ function ClusterCard({ cluster }: { cluster: BiasCluster }) {
 
       <button
         onClick={() => setExpanded((e) => !e)}
-        className="text-xs text-gray-400 hover:text-white transition-colors"
+        className="text-xs text-gray-400 hover:text-white transition-colors inline-flex items-center gap-1"
       >
-        {expanded ? '▲ 收合' : '▼ 展開文章'}
+        {expanded ? <><FiChevronUp aria-hidden /> 收合</> : <><FiChevronDown aria-hidden /> 展開文章</>}
       </button>
 
       {expanded && (

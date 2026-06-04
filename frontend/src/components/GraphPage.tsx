@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
+import { FiShare2, FiFileText } from 'react-icons/fi'
 import { supabase } from '../lib/supabase'
 import type { GraphData, GraphNode } from '../types'
 import ForceGraph2D from 'react-force-graph-2d'
@@ -88,8 +89,8 @@ export default function GraphPage() {
             className="w-28" />
         </div>
         <button onClick={buildGraph} disabled={loading}
-          className="bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white px-4 py-1.5 rounded text-sm">
-          {loading ? '計算中...' : '🕸️ 建立圖譜'}
+          className="bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white px-4 py-1.5 rounded text-sm inline-flex items-center gap-1.5">
+          {loading ? '計算中...' : <><FiShare2 size={14} aria-hidden /> 建立圖譜</>}
         </button>
       </div>
 
@@ -122,8 +123,8 @@ export default function GraphPage() {
                   <div>{selectedNode.source_site}</div>
                 </div>
               </div>
-              <div className="text-purple-300 text-xs font-medium">
-                📰 {selectedNode.article_count} 篇文章
+              <div className="text-purple-300 text-xs font-medium flex items-center gap-1.5">
+                <FiFileText size={13} aria-hidden /> {selectedNode.article_count} 篇文章
               </div>
               <div className="space-y-2">
                 {selectedNode.articles.map((a) => (
