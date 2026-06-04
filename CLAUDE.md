@@ -30,6 +30,11 @@ pytest
 
 ## Architecture
 
+> For the full system map (components, data model, the two Supabase egress
+> surfaces, Edge Functions/RPCs, frontend wiring, and data flows), see
+> [`ARCHITECTURE.md`](ARCHITECTURE.md). The summary below is the scraping/embedding
+> core.
+
 The system has three independent operational phases that run on a schedule inside `api_server.py`:
 
 ```
