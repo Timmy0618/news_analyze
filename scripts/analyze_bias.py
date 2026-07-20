@@ -25,6 +25,7 @@ from langchain_core.messages import HumanMessage
 
 from database.config import Session
 from database.models import ArticleBias, TopicCluster
+from utils.article_content import fetch_article_content
 from utils.llm import create_llm
 from utils.logger import get_logger
 
@@ -34,35 +35,6 @@ logger = get_logger("analyze_bias")
 
 SUPABASE_URL = os.getenv("VITE_SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("VITE_SUPABASE_ANON_KEY", "")
-FIRECRAWL_URL = os.getenv("FIRECRAWL_URL", "http://localhost:3002")
-
-SITE_TAGS: dict[str, list[str]] = {
-    "ltn.com.tw":     ["article"],
-    "tvbs.com.tw":    ["article"],
-    "setn.com":       ["article"],
-    "cna.com.tw":     ["article"],
-    "chinatimes.com": ["article", "main"],
-}
-
-
-def _tags_for_url(url: str) -> list[str]:
-    for domain, tags in SITE_TAGS.items():
-        if domain in url:
-            return tags
-    return []
-
-
-def _is_valid_content(content: str) -> bool:
-    stripped = content.strip()
-    if len(stripped) < 200:
-        return False
-    chinese_chars = sum(1 for c in stripped if "一" <= c <= "鿿")
-    if chinese_chars < 50:
-        return False
-    # Navigation pages consist of short link-lines; real articles have prose paragraphs
-    lines = stripped.split("\n")
-    long_lines = [l for l in lines if len(l.strip()) > 80]
-    return len(long_lines) >= 2
 
 
 def _fetch_clusters(
@@ -90,36 +62,6 @@ def _fetch_clusters(
     resp = requests.post(url, json=payload, headers=headers, timeout=120)
     resp.raise_for_status()
     return resp.json().get("nodes", [])
-
-
-def _fetch_article_content(url: str) -> str | None:
-    def _call(include_tags: list[str], only_main: bool) -> str | None:
-        try:
-            payload: dict = {"url": url, "formats": ["markdown"], "onlyMainContent": only_main}
-            if include_tags:
-                payload["includeTags"] = include_tags
-            resp = requests.post(
-                f"{FIRECRAWL_URL}/v2/scrape",
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            content = resp.json().get("data", {}).get("markdown", "")
-            return content.strip() if content else None
-        except Exception as e:
-            logger.warning(f"Firecrawl failed for {url}: {e}")
-            return None
-
-    tags = _tags_for_url(url)
-    if tags:
-        content = _call(include_tags=tags, only_main=False)
-        if content and _is_valid_content(content):
-            return content
-        logger.info(f"  Firecrawl primary failed/invalid, trying fallback: {url}")
-
-    content = _call(include_tags=[], only_main=True)
-    return content if content and _is_valid_content(content) else None
 
 
 def _extract_json(text: str) -> dict:
@@ -317,7 +259,7 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
                 if db.query(ArticleBias).filter_by(cluster_id=tc.id, article_id=art_id).first():
                     continue
 
-                content = _fetch_article_content(art_url)
+                content = fetch_article_content(art_url)
                 if not content:
                     fetch_failed += 1
                     logger.info(f"  Skip（無法抓取）: {art_url}")

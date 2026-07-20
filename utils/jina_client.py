@@ -35,7 +35,7 @@ class JinaClient:
             raise ValueError(error_msg)
         
         self.api_url = "https://api.jina.ai/v1/embeddings"
-        self.model = "jina-embeddings-v3"
+        self.model = os.getenv("JINA_MODEL", "jina-embeddings-v5-text-small")
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"

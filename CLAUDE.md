@@ -56,14 +56,14 @@ The scraping flow for each site:
 1. Fetch list pages with `requests` (no Firecrawl for list pages)
 2. Call `extract_news_block()` → clean HTML → send to local LLM to extract `[{title, link}]` JSON
 3. Filter out URLs already in the DB (`filter_existing_links`)
-4. For each new link: fetch article via Firecrawl (`/v2/scrape`) → send to LLM to extract reporter
+4. For each new link: fetch article via Firecrawl (`/v2/scrape`) → extract reporter via regex → generate Traditional Chinese summary via local LLM from the full text and save to `大綱`
 5. Save results as JSON to `results/` and optionally insert to DB
 
-The LLM (`utils/llm.py`) is a `ChatOpenAI` instance pointing to a local OpenAI-compatible server. It handles malformed JSON by calling itself again to fix it (`fix_json_response`). Article summaries (`大綱`) are intentionally left empty — the LLM only extracts the reporter field to reduce latency.
+The LLM (`utils/llm.py`) is a `ChatOpenAI` instance pointing to a local OpenAI-compatible server. It handles malformed JSON by calling itself again to fix it (`fix_json_response`).
 
 ### Embedding (`scripts/generate_embeddings.py`, `utils/jina_client.py`)
 
-Queries `news_articles` rows where `title_embedding IS NULL OR summary_embedding IS NULL`, batches them, and calls Jina AI's `jina-embeddings-v3` API to generate 1024-dimensional vectors. Vectors are stored back into the `title_embedding` and `summary_embedding` columns (pgvector `Vector(1024)`).
+Queries `news_articles` rows where `title_embedding IS NULL OR summary_embedding IS NULL`, batches them, and calls Jina AI's `jina-embeddings-v5-text-small` API (configurable via env `JINA_MODEL`, default `jina-embeddings-v5-text-small`) to generate 1024-dimensional vectors. Vectors are stored back into the `title_embedding` and `summary_embedding` columns (pgvector `Vector(1024)`).
 
 ### API (`api_server.py`)
 
@@ -87,6 +87,7 @@ Article dict keys accepted by `save_scraper_results_to_db` support both Chinese 
 ```env
 DATABASE_URL=postgresql://postgres:password@host:5432/news_db
 JINA_API_KEY=...
+JINA_MODEL=jina-embeddings-v5-text-small  # Embedding model (default: jina-embeddings-v5-text-small, 1024 dimensions)
 
 # Local LLM server (OpenAI-compatible)
 LLM_URL=http://localhost:8000/v1
