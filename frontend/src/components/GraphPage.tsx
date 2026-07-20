@@ -1,5 +1,5 @@
-import { useState, useCallback, useRef } from 'react'
-import { FiShare2, FiFileText } from 'react-icons/fi'
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
+import { FiShare2, FiChevronRight } from 'react-icons/fi'
 import { supabase } from '../lib/supabase'
 import type { GraphData, GraphNode } from '../types'
 import ForceGraph2D from 'react-force-graph-2d'
@@ -8,31 +8,35 @@ import { Field, inputCls, btnPrimary } from './ui'
 // Signal Monitor node palette: warm family, distinct on graphite.
 const PALETTE = ['#f0b429', '#d9822b', '#b5533a', '#6f9188', '#a89e88', '#f8d585', '#c19a3e', '#8f6f52']
 
+// Node radius (graph units) from article_count — sqrt so big clusters don't dwarf small.
+function nodeRadius(count: number): number {
+  return Math.sqrt(count) * 2.2 + 3
+}
+
 export default function GraphPage() {
   const [graphData, setGraphData] = useState<GraphData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [hoverId, setHoverId] = useState<string | null>(null)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [source, setSource] = useState('')
   const [maxNodes, setMaxNodes] = useState(100)
   const [k, setK] = useState(10)
-  const sourceColors = useRef<Record<string, string>>({})
-
-  function colorForSource(site: string): string {
-    if (!sourceColors.current[site]) {
-      const idx = Object.keys(sourceColors.current).length
-      sourceColors.current[site] = PALETTE[idx % PALETTE.length]
-    }
-    return sourceColors.current[site]
-  }
+  const rowRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fgRef = useRef<any>(null)
+  // Explicit canvas size — react-force-graph measures the window, not the flex
+  // child, so without this the graph renders far wider than its container.
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const [dims, setDims] = useState({ w: 0, h: 560 })
 
   async function buildGraph() {
     setLoading(true)
     setError('')
-    setSelectedNode(null)
-    sourceColors.current = {}
+    setSelectedId(null)
+    setHoverId(null)
 
     const { data, error: fnErr } = await supabase.functions.invoke<{
       nodes: GraphNode[]
@@ -55,9 +59,118 @@ export default function GraphPage() {
     }
   }
 
-  const handleNodeClick = useCallback((node: object) => {
-    setSelectedNode(node as GraphNode)
-  }, [])
+  // Stable source→colour map, assigned in node order (deterministic per build).
+  const sourceColorMap = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const n of graphData?.nodes ?? []) {
+      if (!(n.source_site in m)) m[n.source_site] = PALETTE[Object.keys(m).length % PALETTE.length]
+    }
+    return m
+  }, [graphData])
+  const colorForSource = useCallback((site: string) => sourceColorMap[site] ?? PALETTE[0], [sourceColorMap])
+
+  // Adjacency (topic id → connected topic ids). Built from links while they're
+  // still raw {source,target} strings; the force-graph mutates them in place
+  // later but this memo has already captured the string form.
+  const neighbors = useMemo(() => {
+    const adj = new Map<string, Set<string>>()
+    for (const l of graphData?.links ?? []) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const s = ((l.source as any)?.id ?? l.source) as string
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const t = ((l.target as any)?.id ?? l.target) as string
+      if (!adj.has(s)) adj.set(s, new Set())
+      if (!adj.has(t)) adj.set(t, new Set())
+      adj.get(s)!.add(t)
+      adj.get(t)!.add(s)
+    }
+    return adj
+  }, [graphData])
+
+  // The topic currently in focus — hover wins over selection.
+  const activeId = hoverId ?? selectedId
+
+  const isLit = useCallback(
+    (id: string) => !activeId || id === activeId || (neighbors.get(activeId)?.has(id) ?? false),
+    [activeId, neighbors],
+  )
+
+  // Ledger rows: topics ranked by article count.
+  const ranked = useMemo(
+    () => (graphData ? [...graphData.nodes].sort((a, b) => b.article_count - a.article_count) : []),
+    [graphData],
+  )
+  const maxCount = ranked.length ? ranked[0].article_count : 1
+  const nodeById = useMemo(
+    () => new Map((graphData?.nodes ?? []).map((n) => [n.id, n])),
+    [graphData],
+  )
+
+  // When focus comes from the graph, bring its ledger row into view.
+  useEffect(() => {
+    if (activeId) rowRefs.current[activeId]?.scrollIntoView({ block: 'nearest' })
+  }, [activeId])
+
+  // Track the graph container's real size; refit when it changes.
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => {
+      setDims({ w: el.clientWidth, h: el.clientHeight })
+      fgRef.current?.zoomToFit(300, 40)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [graphData])
+
+  const drawNode = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (n: any, ctx: CanvasRenderingContext2D, scale: number) => {
+      const node = n as GraphNode & { x: number; y: number }
+      const r = nodeRadius(node.article_count)
+      const lit = isLit(node.id)
+      const focused = node.id === activeId
+      const color = colorForSource(node.source_site)
+
+      ctx.globalAlpha = lit ? 1 : 0.18
+      ctx.beginPath()
+      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI)
+      ctx.fillStyle = color
+      ctx.fill()
+      if (focused) {
+        ctx.lineWidth = 2 / scale
+        ctx.strokeStyle = '#f5c451'
+        ctx.stroke()
+      }
+
+      // Label only for the focused topic + its neighbours — the ledger carries
+      // the rest, so the canvas stays readable instead of a wall of text.
+      if (activeId && lit) {
+        const label = node.title.length > 18 ? node.title.slice(0, 18) + '…' : node.title
+        ctx.font = `${12 / scale}px ui-monospace, monospace`
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'middle'
+        ctx.fillStyle = focused ? '#f5c451' : '#a89e88'
+        ctx.fillText(label, node.x + r + 3 / scale, node.y)
+      }
+      ctx.globalAlpha = 1
+    },
+    [activeId, isLit, colorForSource],
+  )
+
+  const paintPointerArea = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (n: any, color: string, ctx: CanvasRenderingContext2D) => {
+      const node = n as GraphNode & { x: number; y: number }
+      ctx.fillStyle = color
+      ctx.beginPath()
+      ctx.arc(node.x, node.y, nodeRadius(node.article_count), 0, 2 * Math.PI)
+      ctx.fill()
+    },
+    [],
+  )
+
+  const selectedNode = selectedId ? nodeById.get(selectedId) ?? null : null
 
   return (
     <div className="space-y-4">
@@ -90,53 +203,102 @@ export default function GraphPage() {
       {error && <div className="text-red-400 text-sm font-mono bg-red-900/20 border border-red-900/50 rounded-sm p-3">{error}</div>}
 
       {graphData && (
-        <div className="flex gap-4">
-          <div className="flex-1 bg-gray-900 border border-gray-700 rounded-sm overflow-hidden" style={{ height: 560 }}>
+        <div className="flex gap-4 items-stretch">
+          <div ref={wrapRef} className="flex-1 bg-gray-900 border border-gray-700 rounded-sm overflow-hidden" style={{ height: 560 }}>
             <ForceGraph2D
+              ref={fgRef}
+              width={dims.w || undefined}
+              height={dims.h}
               graphData={graphData}
-              nodeLabel={(n) => {
-                const node = n as GraphNode
-                return `${node.title} (${node.article_count} 篇)`
+              nodeCanvasObject={drawNode}
+              nodeCanvasObjectMode={() => 'replace'}
+              nodePointerAreaPaint={paintPointerArea}
+              linkColor={(l) => {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const s = (l.source as any)?.id ?? l.source, t = (l.target as any)?.id ?? l.target
+                if (!activeId) return 'rgba(240,180,41,0.12)'
+                return s === activeId || t === activeId ? 'rgba(245,196,81,0.55)' : 'rgba(240,180,41,0.04)'
               }}
-              nodeColor={(n) => colorForSource((n as GraphNode).source_site)}
-              nodeVal={(n) => (n as GraphNode).article_count}
-              nodeRelSize={4}
-              linkColor={() => 'rgba(240,180,41,0.12)'}
+              linkWidth={(l) => {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const s = (l.source as any)?.id ?? l.source, t = (l.target as any)?.id ?? l.target
+                return activeId && (s === activeId || t === activeId) ? 1.5 : 0.5
+              }}
               backgroundColor="#141310"
-              onNodeClick={handleNodeClick}
+              cooldownTicks={100}
+              onEngineStop={() => fgRef.current?.zoomToFit(400, 40)}
+              onNodeHover={(n) => setHoverId(n ? (n as GraphNode).id : null)}
+              onNodeClick={(n) => setSelectedId((n as GraphNode).id)}
             />
           </div>
 
-          {selectedNode && (
-            <div className="w-72 bg-gray-800 border border-gray-700 rounded-sm text-sm shrink-0 overflow-y-auto" style={{ maxHeight: 560 }}>
-              <div className="px-4 py-2 border-b border-gray-700 flex items-center gap-1.5 text-blue-400">
-                <FiFileText size={13} aria-hidden />
-                <span className="font-mono text-xs tabular-nums">{selectedNode.article_count} 篇文章</span>
-              </div>
-              <div className="p-4 space-y-3">
-                <div>
-                  <div className="font-medium text-gray-100 leading-snug">{selectedNode.title}</div>
-                  <div className="font-mono text-gray-500 text-xs mt-1.5 space-y-0.5">
-                    <div className="text-gray-400">{selectedNode.publish_date}</div>
-                    <div>{selectedNode.source_site}</div>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {selectedNode.articles.map((a) => (
-                    <div key={a.id} className="border-l-2 border-gray-600 pl-2.5">
-                      <a href={a.url} target="_blank" rel="noopener noreferrer"
-                        className="text-gray-200 hover:text-blue-400 leading-snug block transition-colors">
-                        {a.title}
-                      </a>
-                      <div className="font-mono text-gray-500 text-xs mt-0.5">
-                        {a.publish_date}{a.reporter ? ` · ${a.reporter}` : ''}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+          {/* Topic ledger — always readable; no hover required. */}
+          <div className="w-96 shrink-0 bg-gray-800 border border-gray-700 rounded-sm flex flex-col" style={{ height: 560 }}>
+            <div className="px-4 py-2 border-b border-gray-700 flex items-center justify-between">
+              <span className="eyebrow">主題總表</span>
+              <span className="eyebrow tabular-nums">{ranked.length} 主題</span>
             </div>
-          )}
+            <div className="overflow-y-auto flex-1">
+              {ranked.map((node, i) => {
+                const lit = isLit(node.id)
+                const isSel = node.id === selectedId
+                return (
+                  <div key={node.id} className="border-b border-gray-700/60 last:border-0">
+                    <button
+                      ref={(el) => { rowRefs.current[node.id] = el }}
+                      onMouseEnter={() => setHoverId(node.id)}
+                      onMouseLeave={() => setHoverId(null)}
+                      onClick={() => setSelectedId(isSel ? null : node.id)}
+                      className={`w-full text-left px-3 py-2.5 flex flex-col gap-1 transition-colors
+                        ${isSel ? 'bg-gray-700' : 'hover:bg-gray-700/50'}
+                        ${!lit && activeId ? 'opacity-40' : ''}`}
+                    >
+                      {/* Title line — gets nearly the full panel width. */}
+                      <span className="flex items-start gap-2.5">
+                        <span className="font-mono text-xs text-gray-500 tabular-nums w-5 shrink-0 mt-0.5">
+                          {String(i + 1).padStart(2, '0')}
+                        </span>
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0 mt-1" style={{ backgroundColor: colorForSource(node.source_site) }} />
+                        <span className={`flex-1 text-sm leading-snug line-clamp-3 ${isSel ? 'text-blue-400' : 'text-gray-200'}`}>
+                          {node.title}
+                        </span>
+                        <FiChevronRight
+                          size={13} aria-hidden
+                          className={`text-gray-500 shrink-0 mt-0.5 transition-transform ${isSel ? 'rotate-90' : ''}`}
+                        />
+                      </span>
+                      {/* Meta line — count bar, article count, source. */}
+                      <span className="flex items-center gap-2 pl-[1.9375rem] font-mono text-xs text-gray-400">
+                        <span className="h-1.5 rounded-full bg-blue-500/70" style={{ width: `${Math.max(6, (node.article_count / maxCount) * 44)}px` }} />
+                        <span className="tabular-nums">{node.article_count}篇</span>
+                        <span className="text-gray-500">·</span>
+                        <span className="truncate">{node.source_site}</span>
+                      </span>
+                    </button>
+
+                    {isSel && selectedNode && (
+                      <div className="px-3 pb-3 pt-1 space-y-2 bg-gray-900/40">
+                        <div className="font-mono text-gray-500 text-xs">
+                          {selectedNode.publish_date} · {selectedNode.source_site}
+                        </div>
+                        {selectedNode.articles.map((a) => (
+                          <div key={a.id} className="border-l-2 border-gray-600 pl-2.5">
+                            <a href={a.url} target="_blank" rel="noopener noreferrer"
+                              className="text-gray-200 hover:text-blue-400 text-sm leading-snug block transition-colors">
+                              {a.title}
+                            </a>
+                            <div className="font-mono text-gray-500 text-xs mt-0.5">
+                              {a.publish_date}{a.reporter ? ` · ${a.reporter}` : ''}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
         </div>
       )}
 
