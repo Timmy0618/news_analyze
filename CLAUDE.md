@@ -90,11 +90,12 @@ JINA_API_KEY=...
 
 # Local LLM server (OpenAI-compatible)
 LLM_URL=http://localhost:8000/v1
-LLM_MODEL=Qwen/Qwen3-4B-Instruct-2507
+LLM_MODEL=qwen3.6-35b
 OPENAPI_KEY=EMPTY  # can be any non-empty string for local servers
 
 # Firecrawl (self-hosted)
-# NewsScraper defaults to http://localhost:3002
+FIRECRAWL_URL=http://172.17.0.1:3002  # Firecrawl binds to the docker bridge gateway, not localhost (containers use http://host-gateway:3002 via the compose override)
+# NewsScraper reads FIRECRAWL_URL, falling back to http://localhost:3002
 ```
 
 Firecrawl and a local LLM server must be running for scraping to work. See `docker-compose.yml` for Firecrawl setup.

@@ -43,12 +43,14 @@ guide, see `CLAUDE.md`.
         │ scrapers/*.py            │ utils/jina_client.py     │ utils/llm.py
         ▼                          ▼                          ▼
    list pages (requests)      Jina embeddings API        local LLM (vLLM, :8000)
-   + Firecrawl (:3002)        (jina-embeddings-v3)        Qwen3-4B
+   + Firecrawl (172.17.0.1:3002) (jina-embeddings-v3)     qwen3.6-35b
 ```
 
-External services: **Firecrawl** (self-hosted, default `localhost:3002`, scrapes
-article bodies), **Jina AI** (`jina-embeddings-v3`, 1024-dim vectors), **vLLM**
-(local OpenAI-compatible LLM for extraction/classification), **SearXNG** (`:8081`).
+External services: **Firecrawl** (self-hosted, reachable only via the docker
+bridge gateway at `http://172.17.0.1:3002`, honors `FIRECRAWL_URL`; falls back to
+`localhost:3002`, scrapes article bodies), **Jina AI** (`jina-embeddings-v3`,
+1024-dim vectors), **vLLM** (local OpenAI-compatible LLM for
+extraction/classification), **SearXNG** (`:8081`).
 
 ---
 
@@ -201,9 +203,10 @@ topic nodes + similarity edges.
 | `api` | build `.` | `127.0.0.1:8001` | FastAPI + APScheduler (scrapers/embeddings/exports/bias) |
 | `frontend` | build `frontend/` | `127.0.0.1:3000` | nginx serving the Vite build (Supabase URL/key baked at build time) |
 | `searxng` | `searxng/searxng` | `:8081` | meta-search |
-| `vllm` | `vllm/vllm-openai` | `:8000` | local LLM (Qwen3-4B), GPU |
+| `vllm` | `vllm/vllm-openai` | `:8000` | local LLM (qwen3.6-35b), GPU |
 
-Firecrawl runs separately (`firecrawl/`, default `localhost:3002`). To ship code
+Firecrawl runs separately (`firecrawl/`, reachable only at the docker bridge
+gateway `http://172.17.0.1:3002`; falls back to `localhost:3002`). To ship code
 changes: `docker compose up -d --build api frontend` (leave `vllm`/`searxng` running).
 The `api` container runs the startup scheduler jobs immediately on boot, so
 `/health` may lag a few seconds while the first embed batch runs.
