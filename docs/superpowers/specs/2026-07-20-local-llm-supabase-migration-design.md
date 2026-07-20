@@ -38,15 +38,21 @@
 1. 新專案啟用 `vector` extension。
 2. `.env` 補上新專案 `DATABASE_URL`(以 `SUPABASE_PASS` 組 pooler 連線字串;已確認該密碼屬於新專案)。
 3. `uv run alembic upgrade head` 建立 schema(7 個 migrations)。
-4. 透過 MCP 執行 `supabase/*.sql` 四個檔(3 個 RPC + revoke embedding columns 的權限收斂)。
+4. 透過 MCP 執行 `supabase/*.sql`(3 個 RPC + revoke embedding columns 的權限收斂 + 新增的 RLS 設定,見下)。
 5. 部署 3 個 edge functions(`search`、`bias`、`graph`);部署前檢查各 `index.ts` 引用的 secrets(如 Jina API key)並在新專案設定。
-6. 從 MCP 取得新專案 anon key,更新 `frontend/.env`(URL + anon key)與根目錄 `.env` 的 `VITE_SUPABASE_ANON_KEY`。
+6. RLS:新增 `supabase/enable_rls.sql` 進 repo 並在新專案執行:
+   - 對全部 4 張表(`news_articles`、`news_topic_statistics`、`topic_clusters`、`article_bias`)啟用 RLS。
+   - 每張表加一條 anon/authenticated 的 SELECT 政策(`using (true)`,公開唯讀新聞資料)。4 張都要:3 個 RPC 非 SECURITY DEFINER,以呼叫者(anon)身分讀這些表。
+   - 不加任何寫入政策 — 寫入只走後端 `DATABASE_URL`(postgres role,表擁有者不受 RLS 限制)與 edge functions 的 service_role。
+   - embedding 欄位仍由 `revoke_embedding_columns.sql` 的欄位級 REVOKE 擋住。
+7. 從 MCP 取得新專案 anon key,更新 `frontend/.env`(URL + anon key)與根目錄 `.env` 的 `VITE_SUPABASE_ANON_KEY`。
 
 ### 3. 驗證
 
 - `curl http://localhost:8000/v1/chat/completions` 確認本地 LLM 回應。
 - `uv run alembic current` 為 head;以 SQL 查詢確認 RPC 存在。
 - 限量跑一次 scraper(1 頁、少量文章)驗證本地 LLM 抽取 + 寫入新 DB。
+- RLS:用 anon key 直接查 `news_articles` 應回資料、呼叫 3 個 RPC 應正常、嘗試 anon INSERT 應被拒。
 - 前端指向新專案後,手動確認 browse/search 頁正常。
 
 ## 不做的事
