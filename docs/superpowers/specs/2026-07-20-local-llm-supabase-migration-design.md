@@ -38,9 +38,9 @@
 1. 新專案啟用 `vector` extension。
 2. `.env` 補上新專案 `DATABASE_URL`(以 `SUPABASE_PASS` 組 pooler 連線字串;已確認該密碼屬於新專案)。
 3. `uv run alembic upgrade head` 建立 schema(7 個 migrations)。
-4. 透過 MCP 執行 `supabase/*.sql`(3 個 RPC + revoke embedding columns 的權限收斂 + 新增的 RLS 設定,見下)。
+4. 透過 MCP 執行 `database/migrations/20260513_match_articles_fn.sql`(search edge function 依賴的 RPC,repo 已有)與 `supabase/*.sql`(3 個 RPC + revoke embedding columns 的權限收斂),再加 RLS 設定(見下)。
 5. 部署 3 個 edge functions(`search`、`bias`、`graph`);部署前檢查各 `index.ts` 引用的 secrets(如 Jina API key)並在新專案設定。
-6. RLS:新增 `supabase/enable_rls.sql` 進 repo 並在新專案執行:
+6. RLS:repo 既有 `database/migrations/20260513_rls_read_only.sql` 已涵蓋 `news_articles`;新增 `database/migrations/20260720_rls_read_only_all_tables.sql` 補其餘 3 張表,兩檔都在新專案執行:
    - 對全部 4 張表(`news_articles`、`news_topic_statistics`、`topic_clusters`、`article_bias`)啟用 RLS。
    - 每張表加一條 anon/authenticated 的 SELECT 政策(`using (true)`,公開唯讀新聞資料)。4 張都要:3 個 RPC 非 SECURITY DEFINER,以呼叫者(anon)身分讀這些表。
    - 不加任何寫入政策 — 寫入只走後端 `DATABASE_URL`(postgres role,表擁有者不受 RLS 限制)與 edge functions 的 service_role。
