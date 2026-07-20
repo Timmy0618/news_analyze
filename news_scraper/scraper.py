@@ -108,7 +108,7 @@ class NewsScraper:
     def __init__(
         self,
         config: NewsScraperConfig,
-        firecrawl_url: str = "http://localhost:3002",
+        firecrawl_url: Optional[str] = None,
         debug: bool = False,
     ):
         """
@@ -116,12 +116,13 @@ class NewsScraper:
 
         Args:
             config: 網站配置
-            firecrawl_url: Firecrawl API 的 URL
+            firecrawl_url: Firecrawl API 的 URL；None 時改讀環境變數 FIRECRAWL_URL，
+                再退回預設值 http://localhost:3002
             debug: 是否啟用調試模式 (儲存中間檔案)
         """
         load_dotenv()
         self.config = config
-        self.firecrawl_url = firecrawl_url
+        self.firecrawl_url = firecrawl_url or os.getenv("FIRECRAWL_URL", "http://localhost:3002")
         self.debug = debug
 
     def scrape_page(self, url: str, tags: List[str]) -> str:
