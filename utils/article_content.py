@@ -36,7 +36,7 @@ def is_valid_content(content: str) -> bool:
     if chinese_chars < 50:
         return False
     lines = stripped.split("\n")
-    long_lines = [l for l in lines if len(l.strip()) > 80]
+    long_lines = [line for line in lines if len(line.strip()) > 80]
     return len(long_lines) >= 2
 
 
