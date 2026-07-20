@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
+from utils.article_content import summarize_article
+
 
 def filter_existing_links(links: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
     """
@@ -437,6 +439,24 @@ class NewsScraper:
 
         return "未提及", ""
 
+    def build_article_record(
+        self,
+        title: str,
+        link: str,
+        article_content: str,
+        date_str: str,
+    ) -> Dict:
+        """由已抓取的文章全文組出文章記錄;大綱由本地 LLM 摘要(無全文則留空)。"""
+        reporter, _ = self.extract_article_info(article_content)
+        summary = summarize_article(article_content) if article_content else ""
+        return {
+            "標題": title,
+            "記者": reporter,
+            "大綱": summary,
+            "日期": date_str,
+            "連結": link,
+        }
+
     def scrape_news(
         self,
         target_date: Optional[datetime] = None,
@@ -542,17 +562,11 @@ class NewsScraper:
                     f.write(article_content)
                 print(f"  ✓ 原始文章已儲存: {article_filename}")
 
-            reporter, summary = self.extract_article_info(article_content)
+            record = self.build_article_record(title, link, article_content, date_str_full)
+            articles_data.append(record)
 
-            articles_data.append({
-                "標題": title,
-                "記者": reporter,
-                "大綱": summary,
-                "日期": date_str_full,
-                "連結": link
-            })
-
-            print(f"  記者: {reporter}")
+            print(f"  記者: {record['記者']}")
+            print(f"  大綱: {record['大綱'][:40]}...")
 
         # 儲存結果
         print("\n" + "="*80)
