@@ -20,12 +20,12 @@ from scripts.analyze_bias import (
     _classify_bias,
     _determine_topic_sides,
     _extract_json,
-    _fetch_article_content,
     _fetch_clusters,
-    _is_valid_content,
-    _tags_for_url,
     run_bias_analysis,
 )
+from utils.article_content import _tags_for_url
+from utils.article_content import fetch_article_content as _fetch_article_content
+from utils.article_content import is_valid_content as _is_valid_content
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +369,7 @@ class TestRunBiasAnalysis:
 
     def test_writes_cluster_and_bias_rows(self, mock_env, mock_llm, mocker):
         mocker.patch("scripts.analyze_bias._fetch_clusters", return_value=[FAKE_CLUSTER])
-        mocker.patch("scripts.analyze_bias._fetch_article_content", return_value="文章內文")
+        mocker.patch("scripts.analyze_bias.fetch_article_content", return_value="文章內文")
         mocker.patch("scripts.analyze_bias.create_llm", return_value=mock_llm)
 
         mock_db = MagicMock()
@@ -395,7 +395,7 @@ class TestRunBiasAnalysis:
 
     def test_skips_article_when_firecrawl_fails(self, mock_env, mock_llm, mocker):
         mocker.patch("scripts.analyze_bias._fetch_clusters", return_value=[FAKE_CLUSTER])
-        mocker.patch("scripts.analyze_bias._fetch_article_content", return_value=None)
+        mocker.patch("scripts.analyze_bias.fetch_article_content", return_value=None)
         mocker.patch("scripts.analyze_bias.create_llm", return_value=mock_llm)
 
         mock_db = MagicMock()
@@ -452,7 +452,7 @@ class TestRunBiasAnalysis:
             "scripts.analyze_bias._determine_topic_sides",
             return_value={"topic": "花蓮地震災情", "is_controversial": False, "side_a": "", "side_b": ""},
         )
-        fetch = mocker.patch("scripts.analyze_bias._fetch_article_content")
+        fetch = mocker.patch("scripts.analyze_bias.fetch_article_content")
         classify = mocker.patch("scripts.analyze_bias._classify_bias")
 
         mock_db = MagicMock()
