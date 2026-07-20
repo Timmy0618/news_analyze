@@ -304,19 +304,20 @@ async def search_articles(request: SearchRequest):
             similarity_expr = "1 - (title_embedding <=> CAST(:query_embedding AS vector))"
             order_expr = "title_embedding <=> CAST(:query_embedding AS vector)"
         elif request.search_field == "summary":
-            similarity_expr = "1 - (summary_embedding <=> CAST(:query_embedding AS vector))"
-            order_expr = "summary_embedding <=> CAST(:query_embedding AS vector)"
+            # 大綱刻意留空時 summary_embedding 為 NULL,fallback 到標題(同 match_articles RPC)
+            similarity_expr = "1 - (COALESCE(summary_embedding, title_embedding) <=> CAST(:query_embedding AS vector))"
+            order_expr = "COALESCE(summary_embedding, title_embedding) <=> CAST(:query_embedding AS vector)"
         else:  # both
-            # 使用平均相似度，每個距離計算都用括號包起來
+            # 使用平均相似度，每個距離計算都用括號包起來;NULL summary fallback 到標題
             similarity_expr = """
                 1 - (
-                    ((title_embedding <=> CAST(:query_embedding AS vector)) + 
-                     (summary_embedding <=> CAST(:query_embedding AS vector))) / 2
+                    ((title_embedding <=> CAST(:query_embedding AS vector)) +
+                     (COALESCE(summary_embedding, title_embedding) <=> CAST(:query_embedding AS vector))) / 2
                 )
             """
             order_expr = """
-                ((title_embedding <=> CAST(:query_embedding AS vector)) + 
-                 (summary_embedding <=> CAST(:query_embedding AS vector))) / 2
+                ((title_embedding <=> CAST(:query_embedding AS vector)) +
+                 (COALESCE(summary_embedding, title_embedding) <=> CAST(:query_embedding AS vector))) / 2
             """
         
         # 建立基礎查詢
@@ -330,8 +331,7 @@ async def search_articles(request: SearchRequest):
                 publish_date,
                 {similarity_expr} as similarity
             FROM news_articles
-            WHERE title_embedding IS NOT NULL 
-              AND summary_embedding IS NOT NULL
+            WHERE title_embedding IS NOT NULL
         """
         
         # 添加過濾條件
@@ -437,9 +437,8 @@ async def get_stats():
         
         # 有 embedding 的文章數
         embedded_result = db.execute(text("""
-            SELECT COUNT(*) FROM news_articles 
-            WHERE title_embedding IS NOT NULL 
-              AND summary_embedding IS NOT NULL
+            SELECT COUNT(*) FROM news_articles
+            WHERE title_embedding IS NOT NULL
         """))
         embedded_articles = embedded_result.scalar()
         
