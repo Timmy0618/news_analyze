@@ -289,34 +289,58 @@ git commit -m "refactor: extract shared article fetch/validate util + add summar
 ### Task 3: scraper 抓取時產生摘要(新文章)
 
 **Files:**
-- Modify: `news_scraper/scraper.py`(import 區塊;`scrape_news` 第 545-553 行附近)
+- Modify: `news_scraper/scraper.py`(import 區塊;新增 `build_article_record` 方法;`scrape_news` 第 545-553 行改為呼叫它)
 - Test: `tests/test_scraper_summary.py`
 
 **Interfaces:**
 - Consumes: `utils.article_content.summarize_article(content, llm=None) -> str`
-- Produces: `scrape_news` 產出的文章 dict 中 `"大綱"` 為 LLM 摘要(全文抓取失敗時為 `""`)。
+- Produces:
+  - `NewsScraper.build_article_record(self, title: str, link: str, article_content: str, date_str: str) -> dict` — 回傳含 `標題/記者/大綱/日期/連結` 的 dict;`大綱` 為 LLM 摘要,`article_content` 為空時為 `""`。
+  - `scrape_news` 產出的每篇 dict 的 `"大綱"` 由此方法填入。
+
+> 設計說明:把「每篇文章 → dict」從 `scrape_news` 迴圈抽成 `build_article_record`,讓 summary wiring 可被單元測試真實驗證(`scrape_news` 整段相依網路/子類設定/檔案寫入,無法單元測)。這是為了可測性與職責隔離的小重構。
 
 - [ ] **Step 1: 寫失敗測試**
 
-`tests/test_scraper_summary.py`(驗證 wiring:摘要取自已抓取的全文,不觸發額外 Firecrawl):
+`tests/test_scraper_summary.py`(真測 wiring:`大綱` 來自 `summarize_article` 對已抓取全文的結果;空全文則為 `""`;過程不觸發任何網路呼叫):
 ```python
-from unittest import mock
 from news_scraper import scraper as scraper_mod
+from news_scraper.scraper import NewsScraper
 
 
-def test_scrape_news_populates_summary_from_content(monkeypatch):
-    inst = scraper_mod.NewsScraper.__new__(scraper_mod.NewsScraper)
-    monkeypatch.setattr(scraper_mod, "summarize_article", lambda content, **_: "摘要內容")
-    got = scraper_mod.summarize_article("已抓取的全文")
-    assert got == "摘要內容"
+def _bare_instance():
+    # 繞過 __init__(需要 config/網路);只測純方法 build_article_record
+    return NewsScraper.__new__(NewsScraper)
+
+
+def test_build_article_record_uses_summary_from_content(monkeypatch):
+    inst = _bare_instance()
+    monkeypatch.setattr(inst, "extract_article_info", lambda content: ("王小明", ""))
+    monkeypatch.setattr(scraper_mod, "summarize_article", lambda content: "這是摘要。")
+    rec = inst.build_article_record("標題A", "https://x/1", "已抓取的全文內容", "2026/07/20")
+    assert rec["大綱"] == "這是摘要。"
+    assert rec["記者"] == "王小明"
+    assert rec["標題"] == "標題A"
+    assert rec["連結"] == "https://x/1"
+    assert rec["日期"] == "2026/07/20"
+
+
+def test_build_article_record_empty_content_gives_empty_summary(monkeypatch):
+    inst = _bare_instance()
+    monkeypatch.setattr(inst, "extract_article_info", lambda content: ("未提及", ""))
+    # summarize_article 不應被呼叫;若被呼叫就讓測試失敗
+    monkeypatch.setattr(
+        scraper_mod, "summarize_article",
+        lambda content: (_ for _ in ()).throw(AssertionError("空全文不應呼叫 summarize_article")),
+    )
+    rec = inst.build_article_record("標題B", "https://x/2", "", "2026/07/20")
+    assert rec["大綱"] == ""
 ```
-
-> 說明:`scrape_news` 依賴網路與子類設定,難以在單元測試整段跑通;此測試鎖定「`summarize_article` 已被 import 進 scraper 模組且可被呼叫」這個 wiring 契約。實際端到端以 Step 5 手動驗證。
 
 - [ ] **Step 2: 執行測試確認失敗**
 
 Run: `uv run pytest tests/test_scraper_summary.py -v`
-Expected: FAIL(`AttributeError: module 'news_scraper.scraper' has no attribute 'summarize_article'`)
+Expected: FAIL(`AttributeError: 'NewsScraper' object has no attribute 'build_article_record'`)
 
 - [ ] **Step 3: 實作**
 
@@ -325,38 +349,40 @@ Expected: FAIL(`AttributeError: module 'news_scraper.scraper' has no attribute '
 from utils.article_content import summarize_article
 ```
 
-把 `scrape_news` 內第 545-553 行:
+在 `NewsScraper` 類別中(緊接 `extract_article_info` 之後)新增方法:
 ```python
-            reporter, summary = self.extract_article_info(article_content)
-
-            articles_data.append({
-                "標題": title,
-                "記者": reporter,
-                "大綱": summary,
-                "日期": date_str_full,
-                "連結": link
-            })
+    def build_article_record(
+        self,
+        title: str,
+        link: str,
+        article_content: str,
+        date_str: str,
+    ) -> Dict:
+        """由已抓取的文章全文組出文章記錄;大綱由本地 LLM 摘要(無全文則留空)。"""
+        reporter, _ = self.extract_article_info(article_content)
+        summary = summarize_article(article_content) if article_content else ""
+        return {
+            "標題": title,
+            "記者": reporter,
+            "大綱": summary,
+            "日期": date_str,
+            "連結": link,
+        }
 ```
-改為:
+
+把 `scrape_news` 內第 545-555 行(從 `reporter, summary = ...` 到 `print(f"  記者: {reporter}")`)改為:
 ```python
-            reporter, _ = self.extract_article_info(article_content)
-            summary = summarize_article(article_content) if article_content else ""
+            record = self.build_article_record(title, link, article_content, date_str_full)
+            articles_data.append(record)
 
-            articles_data.append({
-                "標題": title,
-                "記者": reporter,
-                "大綱": summary,
-                "日期": date_str_full,
-                "連結": link
-            })
-
-            print(f"  大綱: {summary[:40]}...")
+            print(f"  記者: {record['記者']}")
+            print(f"  大綱: {record['大綱'][:40]}...")
 ```
 
 - [ ] **Step 4: 執行測試確認通過**
 
 Run: `uv run pytest tests/test_scraper_summary.py -v`
-Expected: PASS
+Expected: PASS(2 passed)
 
 - [ ] **Step 5: 手動端到端驗證(需 Firecrawl + 本地 LLM 執行中)**
 
