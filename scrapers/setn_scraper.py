@@ -34,50 +34,54 @@ class SetnScraper(NewsScraper):
     def extract_news_block(self, content: str) -> Optional[str]:
         """
         覆寫父類方法，專門提取三立新聞的新聞列表區塊
-        
+
+        2026 改版後：列表容器為 <div class="news_list_area">，文章連結為
+        /news/<id>（舊版為 id="contFix" + NewsID=）。
+
         Args:
             content: 完整頁面 HTML
-            
+
         Returns:
             新聞列表區塊的 HTML
         """
-        # 三立新聞：<div id="contFix">
-        newslist_match = re.search(
-            r'<div\s+class="container main-news-area viewallNewsList"\s+id="contFix"[^>]*>(.*?)</div>\s*<!--\s*contFix',
-            content, 
-            re.DOTALL | re.IGNORECASE
-        )
-        if newslist_match:
-            print(f"  ✓ 成功擷取 viewallNewsList div (三立)，內容長度: {len(newslist_match.group(1))} 字元")
-            return newslist_match.group(1)
-        
-        # 備用：id="contFix"
-        newslist_match = re.search(
-            r'id="contFix"[^>]*>(.*?)</div>\s*</div>\s*</div>\s*<!--',
-            content,
-            re.DOTALL | re.IGNORECASE
-        )
-        if newslist_match:
-            print(f"  ✓ 擷取 contFix (備用方式)，內容長度: {len(newslist_match.group(1))} 字元")
-            return newslist_match.group(1)
-        
-        # 最後備用：從第一個 NewsID 連結開始
-        first_news_match = re.search(
-            r'<a[^>]*href="[^"]*NewsID=',
-            content,
-            re.IGNORECASE
-        )
+        # 三立新聞（改版後）：主列表容器
+        i = content.find('news_list_area')
+        if i != -1:
+            block = content[i:]
+            print(f"  ✓ 成功擷取 news_list_area (三立)，內容長度: {len(block)} 字元")
+            return block
+
+        # 備用：從第一個 /news/ 連結開始
+        first_news_match = re.search(r'<a[^>]*href="[^"]*/news/\d+', content, re.IGNORECASE)
         if first_news_match:
             start_pos = max(0, first_news_match.start() - 200)
-            result = content[start_pos:start_pos + 50000]
-            print("  ⚠ 未找到 contFix，從第一個新聞連結開始提取")
-            return result
-        
+            print("  ⚠ 未找到 news_list_area，從第一個新聞連結開始提取")
+            return content[start_pos:]
+
         print("  ✗ 無法找到三立新聞的新聞區塊")
         return None
-    
+
+    def parse_news_items(self, soup, target_date):
+        """
+        覆寫父類：三立「即時新聞」列表每則只顯示相對時間（如「1小時前」）
+        或時鐘時間（如「16:21」），沒有日期文字可供比對，因此不做日期過濾——
+        列表本身即為最新新聞，重複與跨日殘留交由 filter_existing_links 去除。
+        """
+        items = []
+        seen: set = set()
+        for a_tag in soup.find_all('a', href=True):
+            href = str(a_tag.get('href', '')).strip()
+            if self._news_url_pattern() not in href or href in seen:
+                continue
+            title = a_tag.get_text(strip=True)
+            if not title or len(title) < 3:
+                continue
+            seen.add(href)
+            items.append((title, href))
+        return items
+
     def _news_url_pattern(self) -> str:
-        return "NewsID="
+        return "/news/"
 
     def build_full_link(self, link: str) -> str:
         """

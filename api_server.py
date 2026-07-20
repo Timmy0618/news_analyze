@@ -90,13 +90,17 @@ def _setup_scheduler() -> Optional[BackgroundScheduler]:
             "target_date": None,  # 每次執行時動態取 datetime.now()
         }
 
-        # 啟動時先執行一次
-        logger.info("scheduler: 啟動時執行 scrapers")
-        try:
-            run_scrapers(**scrape_kwargs)
-            logger.info("scheduler: 初始 scrapers 執行完成")
-        except Exception as e:
-            logger.error(f"scheduler: 初始 scrapers 執行失敗: {e}", exc_info=True)
+        # 啟動時先執行一次：排成背景 one-off job，避免 inline 阻塞 uvicorn bind port
+        scheduler.add_job(
+            run_scrapers,
+            "date",
+            run_date=datetime.now(),
+            id="scrapers_initial",
+            replace_existing=True,
+            kwargs=scrape_kwargs,
+            misfire_grace_time=None,  # start() 後才觸發，run_date 已過也要照跑
+        )
+        logger.info("scheduler: 已排程啟動時 scrapers（背景執行）")
 
         if scrape_schedule_str:
             # cron 模式：SCRAPE_SCHEDULE=HH:MM,HH:MM,...
@@ -142,17 +146,21 @@ def _setup_scheduler() -> Optional[BackgroundScheduler]:
             "on",
         }
 
-        # 啟動時先執行一次
-        logger.info("scheduler: 啟動時執行 embeddings")
-        try:
-            run_embeddings(
-                batch_size=embed_batch_size,
-                limit=embed_limit,
-                force=embed_force,
-            )
-            logger.info("scheduler: 初始 embeddings 執行完成")
-        except Exception as e:
-            logger.error(f"scheduler: 初始 embeddings 執行失敗: {str(e)}", exc_info=True)
+        # 啟動時先執行一次：排成背景 one-off job，避免 inline 阻塞 uvicorn bind port
+        scheduler.add_job(
+            run_embeddings,
+            "date",
+            run_date=datetime.now(),
+            id="embeddings_initial",
+            replace_existing=True,
+            kwargs={
+                "batch_size": embed_batch_size,
+                "limit": embed_limit,
+                "force": embed_force,
+            },
+            misfire_grace_time=None,
+        )
+        logger.info("scheduler: 已排程啟動時 embeddings（背景執行）")
 
         scheduler.add_job(
             run_embeddings,
@@ -475,7 +483,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "api_server:app",
         host="0.0.0.0",
-        port=8001,
-        reload=True
+        port=int(os.getenv("API_PORT", "8001")),
+        reload=os.getenv("API_RELOAD", "").lower() in ("1", "true", "yes"),
     )
 

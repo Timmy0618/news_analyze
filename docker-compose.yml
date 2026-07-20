@@ -3,13 +3,11 @@ services:
     build: .
     container_name: news_api
     env_file: .env
-    ports:
-      - "127.0.0.1:8101:8001"  # host 8101 → container 8001(host 的 8001 已被其他服務佔用)
-    extra_hosts:
-      - "host-gateway:host-gateway"
+    network_mode: host   # 共用 host network namespace，才連得到只綁 127.0.0.1 的 vLLM
     environment:
-      LLM_URL: http://host-gateway:8000/v1
-      FIRECRAWL_URL: http://host-gateway:3002
+      API_PORT: "8101"                        # host 的 8001 已被其他服務佔用，改聽 8101
+      LLM_URL: http://localhost:8000/v1       # vLLM 綁 127.0.0.1，host 模式下 localhost 即 host loopback
+      FIRECRAWL_URL: http://172.17.0.1:3002   # firecrawl 綁在 bridge IP，非 localhost
     command: python api_server.py
     restart: unless-stopped
 
