@@ -221,7 +221,7 @@ class ArticleResult(BaseModel):
     """文章結果"""
     id: int
     title: str
-    summary: str
+    summary: Optional[str] = None  # 大綱刻意留空,DB 為 NULL
     url: str
     source: str
     publish_date: date
