@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { IconType } from 'react-icons'
-import { FiBarChart2, FiSearch, FiBookOpen, FiShare2, FiAlertTriangle } from 'react-icons/fi'
+import { FiBarChart2, FiSearch, FiBookOpen, FiShare2, FiAlertTriangle, FiSun, FiMoon } from 'react-icons/fi'
 import { LuScale } from 'react-icons/lu'
 import TopicStats from './components/TopicStats'
 import SearchPage from './components/SearchPage'
@@ -8,6 +8,7 @@ import BrowsePage from './components/BrowsePage'
 import GraphPage from './components/GraphPage'
 import BiasPage from './components/BiasPage'
 import { supabase, supabaseConfigured } from './lib/supabase'
+import { useTheme } from './lib/theme'
 
 type TabId = 'stats' | 'search' | 'browse' | 'graph' | 'bias'
 
@@ -71,8 +72,23 @@ function StatusStrip() {
   )
 }
 
+function ThemeToggle({ theme, onToggle }: { theme: 'light' | 'dark'; onToggle: () => void }) {
+  const toDark = theme === 'light'
+  return (
+    <button
+      onClick={onToggle}
+      aria-label={toDark ? '切換為暗色模式' : '切換為亮色模式'}
+      title={toDark ? '暗色模式' : '亮色模式'}
+      className="p-1.5 rounded-sm text-gray-400 hover:text-gray-50 hover:bg-gray-700 transition-colors"
+    >
+      {toDark ? <FiMoon size={16} aria-hidden /> : <FiSun size={16} aria-hidden />}
+    </button>
+  )
+}
+
 export default function App() {
   const [tab, setTab] = useState<TabId>('stats')
+  const { theme, toggle } = useTheme()
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-300 font-sans">
@@ -82,7 +98,10 @@ export default function App() {
             <h1 className="text-lg font-semibold tracking-tight text-gray-50">新聞分析</h1>
             <span className="eyebrow">Signal · Monitor</span>
           </div>
-          <StatusStrip />
+          <div className="flex items-center gap-4">
+            <StatusStrip />
+            <ThemeToggle theme={theme} onToggle={toggle} />
+          </div>
         </div>
         {/* signal rule */}
         <div className="h-px bg-blue-500/50" />
