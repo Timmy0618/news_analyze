@@ -176,7 +176,7 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
 
     logger.info(f"取得 {len(clusters)} 個 clusters")
 
-    llm = create_llm(base_url="https://api.openai.com/v1", model="gpt-4.1", temperature=0.3)
+    llm = create_llm(temperature=0.3)  # 本地 vLLM，讀 LLM_URL/LLM_MODEL
     db = Session()
 
     # 當日既有 cluster 的文章集合（含本次新建的，逐步累加，避免每輪重查 DB）

@@ -5,6 +5,7 @@ services:
     env_file: .env
     network_mode: host   # 共用 host network namespace，才連得到只綁 127.0.0.1 的 vLLM
     environment:
+      TZ: "Asia/Taipei"                       # 容器預設 UTC，cron 排程需用台灣時間
       API_PORT: "8101"                        # host 的 8001 已被其他服務佔用，改聽 8101
       LLM_URL: http://localhost:8000/v1       # vLLM 綁 127.0.0.1，host 模式下 localhost 即 host loopback
       FIRECRAWL_URL: http://172.17.0.1:3002   # firecrawl 綁在 bridge IP，非 localhost
