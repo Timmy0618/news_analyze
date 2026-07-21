@@ -143,7 +143,7 @@ VITE_SUPABASE_ANON_KEY=your_anon_key`}
         {tab === 'stats' && <TopicStats theme={theme} />}
         {tab === 'search' && <SearchPage />}
         {tab === 'browse' && <BrowsePage />}
-        {tab === 'graph' && <GraphPage />}
+        {tab === 'graph' && <GraphPage theme={theme} />}
         {tab === 'bias' && <BiasPage />}
       </main>
     </div>
