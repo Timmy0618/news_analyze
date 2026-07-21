@@ -140,7 +140,7 @@ VITE_SUPABASE_ANON_KEY=your_anon_key`}
             <div className="mt-2 text-xs text-yellow-400">然後執行：<code className="font-mono bg-yellow-900/60 px-1 rounded-sm">docker compose build frontend &amp;&amp; docker compose up -d frontend</code></div>
           </div>
         )}
-        {tab === 'stats' && <TopicStats />}
+        {tab === 'stats' && <TopicStats theme={theme} />}
         {tab === 'search' && <SearchPage />}
         {tab === 'browse' && <BrowsePage />}
         {tab === 'graph' && <GraphPage />}
