@@ -28,7 +28,7 @@
   --color-gray-800: #ece6d8; /* panel surface                     */
   --color-gray-700: #e2dccb; /* raised: inputs, pills, hairline   */
   --color-gray-600: #d3cbb6; /* borders, list rails               */
-  --color-gray-500: #8a8069; /* muted dividers / IDs / eyebrows   */
+  --color-gray-500: #6f664f; /* muted dividers / IDs / meta (AA on paper) */
   --color-gray-400: #6b6250; /* secondary / meta (mono)           */
   --color-gray-300: #3a352b; /* primary body text (AA on paper)   */
   --color-gray-200: #2a261e;
@@ -65,7 +65,9 @@
   --color-orange-500: #dc2626;
   --color-orange-400: #b91c1c;
 
-  /* red (errors) left at Tailwind defaults */
+  /* ---- Error red: readable on paper (light) ------------------- */
+  --color-red-400: #b91c1c; /* error text — AA on paper (~5.9:1)  */
+  --color-red-900: #d64545; /* error surface (/20) + border (/50) */
 }
 
 /* =============================================================
@@ -111,6 +113,9 @@
   --color-orange-600: #c0362f;
   --color-orange-500: #e5484d;
   --color-orange-400: #f16a6e;
+
+  --color-red-400: oklch(70.4% .191 22.216);
+  --color-red-900: oklch(39.6% .141 25.723);
 }
 
 /* Bias partisan colors — flipped per theme; consumed via
