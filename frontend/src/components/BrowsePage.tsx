@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import type { NewsArticle } from '../types'
-import { Field, selectCls, btnPrimary, btnGhost } from './ui'
+import { Field, selectCls, inputCls, btnPrimary, btnGhost } from './ui'
 
 const PAGE_SIZE = 50
 
@@ -15,6 +15,7 @@ export default function BrowsePage() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [source, setSource] = useState('')
+  const [reporter, setReporter] = useState('')
   const [sortBy, setSortBy] = useState<'publish_date' | 'source_site'>('publish_date')
 
   useEffect(() => {
@@ -37,6 +38,7 @@ export default function BrowsePage() {
     if (dateFrom) q = q.gte('publish_date', dateFrom)
     if (dateTo) q = q.lte('publish_date', dateTo)
     if (source) q = q.eq('source_site', source)
+    if (reporter.trim()) q = q.ilike('reporter', `%${reporter.trim()}%`)
 
     const { data, count, error } = await q
     setLoading(false)
@@ -64,6 +66,16 @@ export default function BrowsePage() {
             {sources.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </Field>
+        <Field label="Reporter">
+          <input
+            type="search"
+            value={reporter}
+            onChange={(e) => setReporter(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && load(0)}
+            placeholder="記者名字"
+            className={inputCls}
+          />
+        </Field>
         <Field label="Sort">
           <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} className={selectCls}>
             <option value="publish_date">日期</option>
@@ -85,21 +97,32 @@ export default function BrowsePage() {
             <span className="eyebrow">{total.toLocaleString()} dispatches</span>
             <span className="eyebrow">page {page + 1} / {pages}</span>
           </div>
-          <div className="space-y-2">
-            {articles.map((a) => (
-              <div key={a.id} className="bg-gray-800 border border-gray-700 rounded-sm p-3 flex flex-col gap-1.5 hover:border-gray-600 transition-colors">
-                <a href={a.source_url} target="_blank" rel="noopener noreferrer"
-                  className="text-gray-100 hover:text-blue-400 font-medium text-sm leading-snug transition-colors">
-                  {a.title}
-                </a>
-                <div className="flex gap-3 font-mono text-xs text-gray-500">
-                  <span className="text-gray-400">{a.publish_date}</span>
-                  <span className="text-gray-600">·</span>
-                  <span>{a.source_site}</span>
-                  {a.reporter && <><span className="text-gray-600">·</span><span>{a.reporter}</span></>}
-                </div>
-              </div>
-            ))}
+          <div className="bg-gray-800 border border-gray-700 rounded-sm overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-gray-600">
+                  <th className="text-left px-4 py-2.5"><span className="eyebrow">標題</span></th>
+                  <th className="text-left px-4 py-2.5 whitespace-nowrap"><span className="eyebrow">來源</span></th>
+                  <th className="text-left px-4 py-2.5 whitespace-nowrap"><span className="eyebrow">記者</span></th>
+                  <th className="text-right px-4 py-2.5 whitespace-nowrap"><span className="eyebrow">日期</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {articles.map((a) => (
+                  <tr key={a.id} className="border-b border-gray-700 last:border-0 hover:bg-gray-700/60 transition-colors">
+                    <td className="px-4 py-2.5">
+                      <a href={a.source_url} target="_blank" rel="noopener noreferrer"
+                        className="text-gray-100 hover:text-blue-400 font-medium leading-snug transition-colors">
+                        {a.title}
+                      </a>
+                    </td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-gray-400 whitespace-nowrap">{a.source_site}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-gray-400 whitespace-nowrap">{a.reporter || '—'}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-gray-500 text-right whitespace-nowrap">{a.publish_date}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
           <div className="flex gap-2 justify-center pt-2">
             <button disabled={page === 0} onClick={() => load(page - 1)} className={btnGhost}>上一頁</button>
