@@ -105,7 +105,7 @@ export default function App() {
         </div>
         {/* signal rule */}
         <div className="h-px bg-blue-500/50" />
-        <nav className="max-w-6xl mx-auto px-3 flex gap-1 overflow-x-auto border-b border-gray-700">
+        <nav className="max-w-6xl mx-auto px-3 flex gap-1 overflow-x-auto overflow-y-hidden border-b border-gray-700">
           {TABS.map((t) => {
             const active = tab === t.id
             return (
