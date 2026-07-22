@@ -21,27 +21,79 @@
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo",
     "Consolas", "Noto Sans Mono CJK TC", monospace;
 
-  /* ---- Neutral: warm graphite (base #141310 → paper #F4EFE3) ---- */
-  --color-gray-950: #0c0b08;
-  --color-gray-900: #141310; /* app base                          */
-  --color-gray-800: #1b1813; /* panel surface                     */
-  --color-gray-700: #26221a; /* raised: inputs, pills, hairline   */
-  --color-gray-600: #342f24; /* borders, list rails               */
-  --color-gray-500: #6b6250; /* muted dividers / IDs / eyebrows   */
-  --color-gray-400: #a89e88; /* secondary / meta (mono)           */
-  --color-gray-300: #c9c0ad; /* primary body text                 */
-  --color-gray-200: #ddd5c6;
-  --color-gray-100: #ece6d8;
-  --color-gray-50:  #f4efe3; /* headings                          */
+  /* ---- Neutral: warm PAPER base (light default) ------------------ */
+  /* 950 保持深墨：唯一用途是 btnPrimary 在 amber 底上的文字色 */
+  --color-gray-950: #141310;
+  --color-gray-900: #f4efe3; /* app base (paper)                  */
+  --color-gray-800: #ece6d8; /* panel surface                     */
+  --color-gray-700: #e2dccb; /* raised: inputs, pills, hairline   */
+  --color-gray-600: #d3cbb6; /* borders, list rails               */
+  --color-gray-500: #6f664f; /* muted dividers / IDs / meta (AA on paper) */
+  --color-gray-400: #6b6250; /* secondary / meta (mono)           */
+  --color-gray-300: #3a352b; /* primary body text (AA on paper)   */
+  --color-gray-200: #2a261e;
+  --color-gray-100: #1e1b15;
+  --color-gray-50:  #141310; /* headings (ink)                    */
 
-  /* ---- Signal: amber — the single accent (remaps blue) --------- */
-  --color-blue-700: #b7860b;
-  --color-blue-600: #e0a020; /* primary button                    */
-  --color-blue-500: #f0b429; /* signal / hover / focus ring       */
-  --color-blue-400: #f5c451; /* links, active, key figures        */
-  --color-blue-300: #f8d585; /* link hover                        */
+  /* ---- Signal: amber. Text roles darkened for AA on paper ------ */
+  --color-blue-700: #6e4a06;
+  --color-blue-600: #b7860b; /* primary button fill (dark text)   */
+  --color-blue-500: #b7860b; /* signal / focus ring / active edge */
+  --color-blue-400: #8a5e08; /* links, active, key figures        */
+  --color-blue-300: #6e4a06; /* link hover                        */
 
   /* ---- Every other accent family collapses to amber ----------- */
+  --color-indigo-600: #b7860b;
+  --color-indigo-500: #b7860b;
+  --color-purple-600: #b7860b;
+  --color-purple-500: #b7860b;
+  --color-purple-400: #8a5e08;
+  --color-purple-300: #6e4a06;
+  --color-green-600: #6e4a06;
+  --color-green-500: #b7860b;
+  --color-green-400: #8a5e08;
+
+  /* ---- Warning + date highlight: amber family (light) --------- */
+  --color-yellow-900: #fbf1d0; /* warn surface                    */
+  --color-yellow-600: #d9a441; /* warn border                     */
+  --color-yellow-400: #8a5e08; /* date highlight                  */
+  --color-yellow-300: #6e4a06;
+  --color-yellow-200: #5a3d05;
+
+  /* ---- Bias "B side" / partisan: red (remaps orange) ---------- */
+  --color-orange-600: #c0362f;
+  --color-orange-500: #dc2626;
+  --color-orange-400: #b91c1c;
+
+  /* ---- Error red: readable on paper (light) ------------------- */
+  --color-red-400: #b91c1c; /* error text — AA on paper (~5.9:1)  */
+  --color-red-900: #d64545; /* error surface (/20) + border (/50) */
+}
+
+/* =============================================================
+   Dark theme override — the original Signal Monitor palette.
+   Utilities read var(--color-*), so re-declaring the vars in this
+   scope re-skins everything when data-theme="dark" is set.
+   ============================================================= */
+[data-theme="dark"] {
+  --color-gray-950: #0c0b08;
+  --color-gray-900: #141310;
+  --color-gray-800: #1b1813;
+  --color-gray-700: #26221a;
+  --color-gray-600: #342f24;
+  --color-gray-500: #6b6250;
+  --color-gray-400: #a89e88;
+  --color-gray-300: #c9c0ad;
+  --color-gray-200: #ddd5c6;
+  --color-gray-100: #ece6d8;
+  --color-gray-50:  #f4efe3;
+
+  --color-blue-700: #b7860b;
+  --color-blue-600: #e0a020;
+  --color-blue-500: #f0b429;
+  --color-blue-400: #f5c451;
+  --color-blue-300: #f8d585;
+
   --color-indigo-600: #e0a020;
   --color-indigo-500: #f0b429;
   --color-purple-600: #e0a020;
@@ -52,19 +104,35 @@
   --color-green-500: #e0a020;
   --color-green-400: #f5c451;
 
-  /* ---- Warning + date highlight: amber family ----------------- */
-  --color-yellow-900: #3a2a08; /* warn surface                    */
-  --color-yellow-600: #e0a020; /* warn border                     */
-  --color-yellow-400: #f5c451; /* date highlight                  */
+  --color-yellow-900: #3a2a08;
+  --color-yellow-600: #e0a020;
+  --color-yellow-400: #f5c451;
   --color-yellow-300: #f8d585;
   --color-yellow-200: #fbe4ae;
 
-  /* ---- Bias "B side" / partisan: red (remaps orange) ---------- */
   --color-orange-600: #c0362f;
   --color-orange-500: #e5484d;
   --color-orange-400: #f16a6e;
 
-  /* red (errors) left at Tailwind defaults */
+  --color-red-400: oklch(70.4% .191 22.216);
+  --color-red-900: oklch(39.6% .141 25.723);
+}
+
+/* Bias partisan colors — flipped per theme; consumed via
+   text-[var(--bias-*)] classes and inline style in BiasPage. */
+:root {
+  --bias-a-text: #1d4ed8;
+  --bias-b-text: #b91c1c;
+  --bias-neutral-text: #6b6250;
+  --bias-a-ink: #1d4ed8;
+  --bias-b-ink: #c0362f;
+}
+[data-theme="dark"] {
+  --bias-a-text: #6ea8fe;
+  --bias-b-text: #f16a6e;
+  --bias-neutral-text: #a89e88;
+  --bias-a-ink: #3b82f6;
+  --bias-b-ink: #e5484d;
 }
 
 @layer base {
@@ -102,8 +170,10 @@
   line-height: 1;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: #9a9078; /* muted, but AA-legible on graphite (~5.5:1) */
+  color: #6b6250; /* muted, AA on paper */
 }
+
+[data-theme="dark"] .eyebrow { color: #9a9078; }
 
 /* Live telemetry dot in the wire status strip */
 .live-dot {

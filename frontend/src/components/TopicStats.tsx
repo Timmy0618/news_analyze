@@ -16,21 +16,61 @@ interface SourceCount {
   count: number
 }
 
-// Signal Monitor data-viz ramp: warm family, distinct on graphite.
-const COLORS = ['#f0b429', '#d9822b', '#b5533a', '#6f9188', '#a89e88', '#f8d585']
+// Data-viz palettes per theme. Recharts/canvas need concrete color
+// strings, so we pick by theme rather than via CSS vars.
+interface VizPalette {
+  colors: string[]
+  axisFill: string
+  axisStroke: string
+  grid: string
+  cursorStroke: string
+  cursorFill: string
+  tooltipBg: string
+  tooltipBorder: string
+  tooltipText: string
+  line: string
+}
 
-const AXIS = { fill: '#897f6b', fontSize: 11, fontFamily: 'ui-monospace, monospace' }
-const TOOLTIP = {
-  backgroundColor: '#1b1813',
-  border: '1px solid #342f24',
-  borderRadius: 2,
-  fontFamily: 'ui-monospace, monospace',
-  fontSize: 12,
+const VIZ_DARK: VizPalette = {
+  colors: ['#f0b429', '#d9822b', '#b5533a', '#6f9188', '#a89e88', '#f8d585'],
+  axisFill: '#897f6b',
+  axisStroke: '#342f24',
+  grid: '#26221a',
+  cursorStroke: '#342f24',
+  cursorFill: 'rgba(240,180,41,0.06)',
+  tooltipBg: '#1b1813',
+  tooltipBorder: '#342f24',
+  tooltipText: '#c9c0ad',
+  line: '#f0b429',
+}
+
+const VIZ_LIGHT: VizPalette = {
+  colors: ['#c77f0a', '#b5533a', '#4f7168', '#8a6d3b', '#9c5a2a', '#6e4a06'],
+  axisFill: '#6b6250',
+  axisStroke: '#d3cbb6',
+  grid: '#e2dccb',
+  cursorStroke: '#d3cbb6',
+  cursorFill: 'rgba(183,134,11,0.10)',
+  tooltipBg: '#ffffff',
+  tooltipBorder: '#d3cbb6',
+  tooltipText: '#141310',
+  line: '#b7860b',
 }
 
 const DAY_OPTIONS = [7, 14, 30, 60]
 
-export default function TopicStats() {
+export default function TopicStats({ theme }: { theme: 'light' | 'dark' }) {
+  const viz = theme === 'dark' ? VIZ_DARK : VIZ_LIGHT
+  const COLORS = viz.colors
+  const AXIS = { fill: viz.axisFill, fontSize: 11, fontFamily: 'ui-monospace, monospace' }
+  const TOOLTIP = {
+    backgroundColor: viz.tooltipBg,
+    border: `1px solid ${viz.tooltipBorder}`,
+    color: viz.tooltipText,
+    borderRadius: 2,
+    fontFamily: 'ui-monospace, monospace',
+    fontSize: 12,
+  }
   const [daily, setDaily] = useState<DailyCount[]>([])
   const [bySite, setBySite] = useState<SourceCount[]>([])
   const [totalArticles, setTotalArticles] = useState(0)
@@ -109,11 +149,11 @@ export default function TopicStats() {
       <Panel eyebrow="每日文章數量 / Daily volume">
         <ResponsiveContainer width="100%" height={240}>
           <LineChart data={daily} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="2 4" stroke="#26221a" />
-            <XAxis dataKey="publish_date" tick={AXIS} stroke="#342f24" />
-            <YAxis tick={AXIS} stroke="#342f24" />
-            <Tooltip contentStyle={TOOLTIP} cursor={{ stroke: '#342f24' }} />
-            <Line type="monotone" dataKey="count" stroke="#f0b429" dot={false} strokeWidth={2} name="篇數" />
+            <CartesianGrid strokeDasharray="2 4" stroke={viz.grid} />
+            <XAxis dataKey="publish_date" tick={AXIS} stroke={viz.axisStroke} />
+            <YAxis tick={AXIS} stroke={viz.axisStroke} />
+            <Tooltip contentStyle={TOOLTIP} cursor={{ stroke: viz.cursorStroke }} />
+            <Line type="monotone" dataKey="count" stroke={viz.line} dot={false} strokeWidth={2} name="篇數" />
           </LineChart>
         </ResponsiveContainer>
       </Panel>
@@ -121,10 +161,10 @@ export default function TopicStats() {
       <Panel eyebrow="各來源文章數 / By source">
         <ResponsiveContainer width="100%" height={240}>
           <BarChart data={bySite} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="2 4" stroke="#26221a" />
-            <XAxis dataKey="source_site" tick={AXIS} stroke="#342f24" />
-            <YAxis tick={AXIS} stroke="#342f24" />
-            <Tooltip contentStyle={TOOLTIP} cursor={{ fill: 'rgba(240,180,41,0.06)' }} />
+            <CartesianGrid strokeDasharray="2 4" stroke={viz.grid} />
+            <XAxis dataKey="source_site" tick={AXIS} stroke={viz.axisStroke} />
+            <YAxis tick={AXIS} stroke={viz.axisStroke} />
+            <Tooltip contentStyle={TOOLTIP} cursor={{ fill: viz.cursorFill }} />
             <Bar dataKey="count" name="篇數" radius={[2, 2, 0, 0]}>
               {bySite.map((_, i) => (
                 <Cell key={i} fill={COLORS[i % COLORS.length]} />

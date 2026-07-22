@@ -5,15 +5,46 @@ import type { GraphData, GraphNode } from '../types'
 import ForceGraph2D from 'react-force-graph-2d'
 import { Field, inputCls, btnPrimary } from './ui'
 
-// Signal Monitor node palette: warm family, distinct on graphite.
-const PALETTE = ['#f0b429', '#d9822b', '#b5533a', '#6f9188', '#a89e88', '#f8d585', '#c19a3e', '#8f6f52']
+interface GraphPalette {
+  nodes: string[]
+  bg: string
+  focusStroke: string
+  labelFocus: string
+  labelDim: string
+  linkBase: string
+  linkActive: string
+  linkDim: string
+}
+
+const GRAPH_DARK: GraphPalette = {
+  nodes: ['#f0b429', '#d9822b', '#b5533a', '#6f9188', '#a89e88', '#f8d585', '#c19a3e', '#8f6f52'],
+  bg: '#141310',
+  focusStroke: '#f5c451',
+  labelFocus: '#f5c451',
+  labelDim: '#a89e88',
+  linkBase: 'rgba(240,180,41,0.12)',
+  linkActive: 'rgba(245,196,81,0.55)',
+  linkDim: 'rgba(240,180,41,0.04)',
+}
+
+const GRAPH_LIGHT: GraphPalette = {
+  nodes: ['#c77f0a', '#b5533a', '#4f7168', '#8a6d3b', '#9c5a2a', '#6e4a06', '#7a6a2e', '#5f4a38'],
+  bg: '#f4efe3',
+  focusStroke: '#b7860b',
+  labelFocus: '#8a5e08',
+  labelDim: '#6b6250',
+  linkBase: 'rgba(183,134,11,0.16)',
+  linkActive: 'rgba(138,94,8,0.55)',
+  linkDim: 'rgba(183,134,11,0.05)',
+}
 
 // Node radius (graph units) from article_count — sqrt so big clusters don't dwarf small.
 function nodeRadius(count: number): number {
   return Math.sqrt(count) * 2.2 + 3
 }
 
-export default function GraphPage() {
+export default function GraphPage({ theme }: { theme: 'light' | 'dark' }) {
+  const gviz = theme === 'dark' ? GRAPH_DARK : GRAPH_LIGHT
   const [graphData, setGraphData] = useState<GraphData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -63,11 +94,11 @@ export default function GraphPage() {
   const sourceColorMap = useMemo(() => {
     const m: Record<string, string> = {}
     for (const n of graphData?.nodes ?? []) {
-      if (!(n.source_site in m)) m[n.source_site] = PALETTE[Object.keys(m).length % PALETTE.length]
+      if (!(n.source_site in m)) m[n.source_site] = gviz.nodes[Object.keys(m).length % gviz.nodes.length]
     }
     return m
-  }, [graphData])
-  const colorForSource = useCallback((site: string) => sourceColorMap[site] ?? PALETTE[0], [sourceColorMap])
+  }, [graphData, gviz])
+  const colorForSource = useCallback((site: string) => sourceColorMap[site] ?? gviz.nodes[0], [sourceColorMap, gviz])
 
   // Adjacency (topic id → connected topic ids). Built from links while they're
   // still raw {source,target} strings; the force-graph mutates them in place
@@ -139,7 +170,7 @@ export default function GraphPage() {
       ctx.fill()
       if (focused) {
         ctx.lineWidth = 2 / scale
-        ctx.strokeStyle = '#f5c451'
+        ctx.strokeStyle = gviz.focusStroke
         ctx.stroke()
       }
 
@@ -150,12 +181,12 @@ export default function GraphPage() {
         ctx.font = `${12 / scale}px ui-monospace, monospace`
         ctx.textAlign = 'left'
         ctx.textBaseline = 'middle'
-        ctx.fillStyle = focused ? '#f5c451' : '#a89e88'
+        ctx.fillStyle = focused ? gviz.labelFocus : gviz.labelDim
         ctx.fillText(label, node.x + r + 3 / scale, node.y)
       }
       ctx.globalAlpha = 1
     },
-    [activeId, isLit, colorForSource],
+    [activeId, isLit, colorForSource, gviz],
   )
 
   const paintPointerArea = useCallback(
@@ -216,15 +247,15 @@ export default function GraphPage() {
               linkColor={(l) => {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const s = (l.source as any)?.id ?? l.source, t = (l.target as any)?.id ?? l.target
-                if (!activeId) return 'rgba(240,180,41,0.12)'
-                return s === activeId || t === activeId ? 'rgba(245,196,81,0.55)' : 'rgba(240,180,41,0.04)'
+                if (!activeId) return gviz.linkBase
+                return s === activeId || t === activeId ? gviz.linkActive : gviz.linkDim
               }}
               linkWidth={(l) => {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const s = (l.source as any)?.id ?? l.source, t = (l.target as any)?.id ?? l.target
                 return activeId && (s === activeId || t === activeId) ? 1.5 : 0.5
               }}
-              backgroundColor="#141310"
+              backgroundColor={gviz.bg}
               cooldownTicks={100}
               onEngineStop={() => fgRef.current?.zoomToFit(400, 40)}
               onNodeHover={(n) => setHoverId(n ? (n as GraphNode).id : null)}

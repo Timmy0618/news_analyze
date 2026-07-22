@@ -6,16 +6,16 @@ import type { BiasCluster, BiasSourceStat } from '../types'
 const VERDICTS = ['side_a', 'neutral', 'side_b'] as const
 type Verdict = typeof VERDICTS[number]
 
-// Bias sides are pinned blue/red — they encode partisan meaning, so they
-// stay independent of the single-amber Signal Monitor theme.
-const BIAS_A = '#3b82f6'
-const BIAS_A_TEXT = 'text-[#6ea8fe]'
-const BIAS_B = '#e5484d'
-const BIAS_B_TEXT = 'text-[#f16a6e]'
+// Bias sides are pinned blue/red (independent of the amber Signal Monitor
+// accent) but adapt to light/dark via the --bias-* vars in index.css.
+const BIAS_A = 'var(--bias-a-ink)'
+const BIAS_A_TEXT = 'text-[var(--bias-a-text)]'
+const BIAS_B = 'var(--bias-b-ink)'
+const BIAS_B_TEXT = 'text-[var(--bias-b-text)]'
 
 const VERDICT: Record<Verdict, { label: string; bar: string; text: string }> = {
   side_a:  { label: '偏A方', bar: 'bg-[#3b82f6]', text: BIAS_A_TEXT },
-  neutral: { label: '中立',  bar: 'bg-[#6b6250]', text: 'text-[#a89e88]' },
+  neutral: { label: '中立',  bar: 'bg-[#6b6250]', text: 'text-[var(--bias-neutral-text)]' },
   side_b:  { label: '偏B方', bar: 'bg-[#e5484d]', text: BIAS_B_TEXT },
 }
 
