@@ -174,15 +174,22 @@ export default function GraphPage({ theme }: { theme: 'light' | 'dark' }) {
         ctx.stroke()
       }
 
-      // Label only for the focused topic + its neighbours — the ledger carries
-      // the rest, so the canvas stays readable instead of a wall of text.
-      if (activeId && lit) {
-        const label = node.title.length > 18 ? node.title.slice(0, 18) + '…' : node.title
-        ctx.font = `${12 / scale}px ui-monospace, monospace`
+      // Label only the focused topic — neighbour labels pile up and collide, so
+      // the ledger (lit rows) + active links carry the connections instead. A bg
+      // pill keeps the one label readable over the nodes/links behind it.
+      if (focused) {
+        const label = node.title.length > 22 ? node.title.slice(0, 22) + '…' : node.title
+        const fs = 12 / scale
+        const pad = 4 / scale
+        ctx.font = `${fs}px ui-monospace, monospace`
         ctx.textAlign = 'left'
         ctx.textBaseline = 'middle'
-        ctx.fillStyle = focused ? gviz.labelFocus : gviz.labelDim
-        ctx.fillText(label, node.x + r + 3 / scale, node.y)
+        const lx = node.x + r + 4 / scale
+        const tw = ctx.measureText(label).width
+        ctx.fillStyle = gviz.bg
+        ctx.fillRect(lx - pad, node.y - fs / 2 - pad, tw + pad * 2, fs + pad * 2)
+        ctx.fillStyle = gviz.labelFocus
+        ctx.fillText(label, lx, node.y)
       }
       ctx.globalAlpha = 1
     },
