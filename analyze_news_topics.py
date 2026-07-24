@@ -221,32 +221,23 @@ def count_related_articles_by_vector(
             return 0
         
         query_embedding = embeddings[0]
-        # 統一使用和 search_articles_vector 相同的方式
         query_embedding_str = str(query_embedding)
-        
-        # 固定使用標題和摘要的平均相似度
-        similarity_condition = """
-            (
-                (1 - (title_embedding <=> CAST(:query_embedding AS vector))) +
-                (1 - (summary_embedding <=> CAST(:query_embedding AS vector)))
-            ) / 2 > :threshold
-        """
-        
-        # 查詢相似度 > threshold 的文章數量
-        query_sql = f"""
-            SELECT COUNT(*) as count
-            FROM news_articles
-            WHERE title_embedding IS NOT NULL
-              AND summary_embedding IS NOT NULL
-              AND publish_date = :target_date
-              AND {similarity_condition}
-        """
-        
-        result = db.execute(text(query_sql), {
-            "query_embedding": query_embedding_str,
-            "target_date": target_date,
-            "threshold": similarity_threshold
-        })
+
+        # 相似度、COALESCE fallback 與 NULL 規則統一由 SQL RPC count_related_articles
+        # 負責（與 match_articles 同源，見 database/migrations）。Python 端只負責生成
+        # 向量並呼叫 RPC，不再自己拼相似度 SQL——先前的 inline 版本用了
+        # `AND summary_embedding IS NOT NULL`，在大綱留空時計數幾乎恆為 0。
+        result = db.execute(
+            text(
+                "SELECT count_related_articles("
+                "CAST(:query_embedding AS vector), :target_date, :threshold) AS count"
+            ),
+            {
+                "query_embedding": query_embedding_str,
+                "target_date": target_date,
+                "threshold": similarity_threshold,
+            },
+        )
         
         row = result.fetchone()
         count = row.count if row else 0

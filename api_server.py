@@ -3,11 +3,9 @@ FastAPI 向量查詢服務
 提供新聞文章的語義搜尋功能
 """
 
-from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional, Literal
-from datetime import date, datetime
-import httpx
+from fastapi import FastAPI, HTTPException
+from typing import Optional
+from datetime import datetime
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 import os
@@ -16,9 +14,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
 
 from database.config import DATABASE_URL
-from database.models import NewsArticle
 from utils.logger import get_logger
-from utils.jina_client import generate_embedding as jina_generate_embedding
 from utils.scheduler.tasks import run_embeddings, run_scrapers
 
 # 載入環境變數
@@ -212,40 +208,6 @@ def _setup_scheduler() -> Optional[BackgroundScheduler]:
     return None
 
 
-class SearchRequest(BaseModel):
-    """搜尋請求"""
-    query: str = Field(..., description="搜尋查詢文字", min_length=1)
-    search_field: Literal["title", "summary", "both"] = Field(
-        default="both",
-        description="搜尋欄位: title(標題), summary(摘要), both(兩者都搜)"
-    )
-    top_k: int = Field(default=10, ge=1, le=100, description="返回結果數量")
-    source: Optional[str] = Field(default=None, description="過濾來源網站")
-    date_from: Optional[date] = Field(default=None, description="開始日期")
-    date_to: Optional[date] = Field(default=None, description="結束日期")
-
-
-class ArticleResult(BaseModel):
-    """文章結果"""
-    id: int
-    title: str
-    summary: Optional[str] = None  # 大綱刻意留空,DB 為 NULL
-    url: str
-    source: str
-    publish_date: date
-    similarity: float = Field(..., description="相似度分數 (0-1)")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SearchResponse(BaseModel):
-    """搜尋回應"""
-    query: str
-    search_field: str
-    total: int
-    results: List[ArticleResult]
-
-
 @app.get("/")
 async def root():
     """API 根路徑"""
@@ -253,7 +215,6 @@ async def root():
         "message": "新聞向量查詢 API",
         "version": "1.0.0",
         "endpoints": {
-            "search": "/api/search",
             "health": "/health"
         }
     }
@@ -279,130 +240,6 @@ async def health_check():
         "database": db_status,
         "jina_api": "ok" if JINA_API_KEY else "missing_api_key"
     }
-
-
-@app.post("/api/search", response_model=SearchResponse)
-async def search_articles(request: SearchRequest):
-    """
-    語義搜尋新聞文章
-    
-    使用向量相似度搜尋與查詢最相關的新聞文章
-    """
-    logger.info(f"收到搜尋請求: query='{request.query}', field={request.search_field}, top_k={request.top_k}")
-    
-    # 生成查詢向量
-    try:
-        query_embedding = await jina_generate_embedding(request.query)
-    except Exception as e:
-        logger.error(f"生成查詢向量失敗: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"生成查詢向量失敗: {str(e)}"
-        )
-    
-    # 建立資料庫查詢
-    db = SessionLocal()
-    
-    try:
-        # 將向量轉換為字串格式（用於 SQL）
-        query_embedding_str = str(query_embedding.tolist()) if hasattr(query_embedding, 'tolist') else str(query_embedding)
-        
-        # 根據搜尋欄位選擇相似度計算方式
-        if request.search_field == "title":
-            similarity_expr = "1 - (title_embedding <=> CAST(:query_embedding AS vector))"
-            order_expr = "title_embedding <=> CAST(:query_embedding AS vector)"
-        elif request.search_field == "summary":
-            # 大綱刻意留空時 summary_embedding 為 NULL,fallback 到標題(同 match_articles RPC)
-            similarity_expr = "1 - (COALESCE(summary_embedding, title_embedding) <=> CAST(:query_embedding AS vector))"
-            order_expr = "COALESCE(summary_embedding, title_embedding) <=> CAST(:query_embedding AS vector)"
-        else:  # both
-            # 使用平均相似度，每個距離計算都用括號包起來;NULL summary fallback 到標題
-            similarity_expr = """
-                1 - (
-                    ((title_embedding <=> CAST(:query_embedding AS vector)) +
-                     (COALESCE(summary_embedding, title_embedding) <=> CAST(:query_embedding AS vector))) / 2
-                )
-            """
-            order_expr = """
-                ((title_embedding <=> CAST(:query_embedding AS vector)) +
-                 (COALESCE(summary_embedding, title_embedding) <=> CAST(:query_embedding AS vector))) / 2
-            """
-        
-        # 建立基礎查詢
-        query_sql = f"""
-            SELECT 
-                id,
-                title,
-                summary,
-                source_url as url,
-                source_site as source,
-                publish_date,
-                {similarity_expr} as similarity
-            FROM news_articles
-            WHERE title_embedding IS NOT NULL
-        """
-        
-        # 添加過濾條件
-        conditions = []
-        params = {"query_embedding": query_embedding_str}
-        
-        if request.source:
-            conditions.append("source_site = :source")
-            params["source"] = request.source
-        
-        if request.date_from:
-            conditions.append("publish_date >= :date_from")
-            params["date_from"] = request.date_from
-        
-        if request.date_to:
-            conditions.append("publish_date <= :date_to")
-            params["date_to"] = request.date_to
-        
-        if conditions:
-            query_sql += " AND " + " AND ".join(conditions)
-        
-        # 添加排序和限制
-        query_sql += f"""
-            ORDER BY {order_expr}
-            LIMIT :limit
-        """
-        params["limit"] = request.top_k
-        
-        # 執行查詢
-        logger.debug(f"執行資料庫查詢，參數: {params}")
-        result = db.execute(text(query_sql), params)
-        rows = result.fetchall()
-        
-        # 轉換結果
-        articles = []
-        for row in rows:
-            articles.append(ArticleResult(
-                id=row.id,
-                title=row.title,
-                summary=row.summary,
-                url=row.url,
-                source=row.source,
-                publish_date=row.publish_date,
-                similarity=float(row.similarity)
-            ))
-        
-        logger.info(f"搜尋完成，找到 {len(articles)} 筆結果")
-        
-        return SearchResponse(
-            query=request.query,
-            search_field=request.search_field,
-            total=len(articles),
-            results=articles
-        )
-        
-    except Exception as e:
-        logger.error(f"資料庫查詢失敗: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"資料庫查詢失敗: {str(e)}"
-        )
-    finally:
-        db.close()
 
 
 @app.get("/api/sources")
