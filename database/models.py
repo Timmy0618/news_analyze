@@ -4,6 +4,7 @@
 """
 
 from sqlalchemy import Column, Integer, Float, String, Text, DateTime, Date, Index, JSON, ForeignKey, UniqueConstraint
+from sqlalchemy.orm import deferred
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 from pgvector.sqlalchemy import Vector
@@ -32,8 +33,14 @@ class NewsArticle(Base):
     # 向量欄位（用於語義搜索）
     # 1024 維度適用於 Jina AI jina-embeddings-v3
     # 可根據使用的模型調整維度
-    title_embedding = Column(Vector(1024), comment='標題向量')
-    summary_embedding = Column(Vector(1024), comment='大綱向量')
+    #
+    # egress 守則（見 ARCHITECTURE.md §3）：這兩個 1024 維欄位在 surface #1
+    # （外部 Python ↔ Supabase Postgres）是最貴的讀取成本。用 deferred 讓它們
+    # 預設不進 SELECT，規則集中在模型這一處而非散落各查詢；raiseload=True 讓任何
+    # 未經 undefer 就存取的程式碼「大聲」報錯，而非默默補一次 per-row 查詢。
+    # 真的需要向量的呼叫端（如 export_to_obsidian）以 undefer()/load_only() 明確取用。
+    title_embedding = deferred(Column(Vector(1024), comment='標題向量'), raiseload=True)
+    summary_embedding = deferred(Column(Vector(1024), comment='大綱向量'), raiseload=True)
     
     # 系統欄位
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment='建立時間')

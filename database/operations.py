@@ -454,7 +454,6 @@ def search_articles_keyword(
         搜尋結果列表
     """
     from sqlalchemy import or_
-    from sqlalchemy.orm import load_only
 
     should_close_session = False
     if db_session is None:
@@ -462,18 +461,9 @@ def search_articles_keyword(
         should_close_session = True
 
     try:
-        # 建立查詢（只載入結果用得到的欄位，排除兩個 1024 維向量欄位，降低 egress）
-        q = db_session.query(NewsArticle).options(
-            load_only(
-                NewsArticle.id,
-                NewsArticle.title,
-                NewsArticle.reporter,
-                NewsArticle.summary,
-                NewsArticle.source_url,
-                NewsArticle.source_site,
-                NewsArticle.publish_date,
-            )
-        )
+        # 兩個 1024 維向量欄位已在模型層 deferred（見 ARCHITECTURE.md §3），
+        # 預設就不會進 SELECT，這裡直接查即可。
+        q = db_session.query(NewsArticle)
 
         # 添加搜尋條件
         search_conditions = []
