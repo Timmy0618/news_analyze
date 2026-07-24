@@ -9,7 +9,7 @@ def _bare_instance():
 
 def test_build_article_record_uses_summary_from_content(monkeypatch):
     inst = _bare_instance()
-    monkeypatch.setattr(inst, "extract_article_info", lambda content: ("王小明", ""))
+    monkeypatch.setattr(scraper_mod, "extract_byline", lambda content: "王小明")
     monkeypatch.setattr(scraper_mod, "summarize_article", lambda content: "這是摘要。")
     rec = inst.build_article_record("標題A", "https://x/1", "已抓取的全文內容", "2026/07/20")
     assert rec["大綱"] == "這是摘要。"
@@ -21,7 +21,7 @@ def test_build_article_record_uses_summary_from_content(monkeypatch):
 
 def test_build_article_record_empty_content_gives_empty_summary(monkeypatch):
     inst = _bare_instance()
-    monkeypatch.setattr(inst, "extract_article_info", lambda content: ("未提及", ""))
+    monkeypatch.setattr(scraper_mod, "extract_byline", lambda content: "未提及")
     # summarize_article 不應被呼叫;若被呼叫就讓測試失敗
     monkeypatch.setattr(
         scraper_mod, "summarize_article",

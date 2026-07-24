@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from scrapers.tvbs_scraper import TvbsScraper
 from scrapers.setn_scraper import SetnScraper
 from scrapers.chinatimes_scraper import ChinaTimesScraper
+from news_scraper.byline import extract_byline
 from news_scraper.scraper import NewsScraper
 
 FIRECRAWL_URL = os.getenv("FIRECRAWL_URL", "http://localhost:3002")
@@ -158,7 +159,7 @@ def diagnose_site(name: str, scraper: NewsScraper) -> dict:
     if article_md:
         print(f"[文章] 內容前 300 字:\n{article_md[:300]}")
 
-    reporter, _ = scraper.extract_article_info(article_md)
+    reporter = extract_byline(article_md)
     result["reporter"] = reporter
     result["reporter_pass"] = reporter != "未提及" and len(reporter) > 1
 

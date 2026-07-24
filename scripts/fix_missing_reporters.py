@@ -14,6 +14,7 @@ from database.config import Session
 from sqlalchemy.orm import load_only
 
 from database.models import NewsArticle
+from news_scraper.byline import extract_byline
 from news_scraper.scraper import NewsScraper, NewsScraperConfig
 from scrapers.cna_scraper import CnaScraper
 from scrapers.chinatimes_scraper import ChinaTimesScraper
@@ -90,7 +91,7 @@ def main():
             time.sleep(0.5)
             continue
 
-        reporter, _ = scraper.extract_article_info(content)
+        reporter = extract_byline(content)
         print(f"  → 記者: {reporter}")
 
         if reporter == "未提及":
