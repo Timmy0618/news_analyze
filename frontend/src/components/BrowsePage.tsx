@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+import { newsApi, errorMessage } from '../lib/newsApi'
 import type { NewsArticle } from '../types'
-import { Field, selectCls, inputCls, btnPrimary, btnGhost } from './ui'
+import { Field, selectCls, inputCls, btnPrimary, btnGhost, ErrorBanner } from './ui'
 
 const PAGE_SIZE = 50
 
@@ -10,6 +10,7 @@ export default function BrowsePage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const [sources, setSources] = useState<string[]>([])
 
   const [dateFrom, setDateFrom] = useState('')
@@ -19,33 +20,24 @@ export default function BrowsePage() {
   const [sortBy, setSortBy] = useState<'publish_date' | 'source_site'>('publish_date')
 
   useEffect(() => {
-    // 用伺服器端 RPC 取得不重複來源，避免把全表的 source_site 拉到前端（省 egress）
-    supabase
-      .rpc('get_distinct_sources')
-      .then(({ data }) => {
-        if (data) setSources(data as string[])
-      })
+    // 來源下拉是輔助資料，失敗時留空即可，不需阻斷整頁
+    newsApi.sources().then(setSources).catch(() => setSources([]))
   }, [])
 
   async function load(p = 0) {
     setLoading(true)
-    let q = supabase
-      .from('news_articles')
-      .select('id,title,source_url,source_site,publish_date,reporter', { count: 'exact' })
-      .order(sortBy, { ascending: false })
-      .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
-
-    if (dateFrom) q = q.gte('publish_date', dateFrom)
-    if (dateTo) q = q.lte('publish_date', dateTo)
-    if (source) q = q.eq('source_site', source)
-    if (reporter.trim()) q = q.ilike('reporter', `%${reporter.trim()}%`)
-
-    const { data, count, error } = await q
-    setLoading(false)
-    if (!error && data) {
-      setArticles(data as NewsArticle[])
-      setTotal(count ?? 0)
+    setError('')
+    try {
+      const { articles, total } = await newsApi.browse({
+        dateFrom, dateTo, source, reporter, sortBy, page: p, pageSize: PAGE_SIZE,
+      })
+      setArticles(articles)
+      setTotal(total)
       setPage(p)
+    } catch (e) {
+      setError(errorMessage(e))
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -84,6 +76,8 @@ export default function BrowsePage() {
         </Field>
         <button onClick={() => load(0)} className={btnPrimary}>套用篩選</button>
       </div>
+
+      <ErrorBanner msg={error} />
 
       {loading && <div className="text-gray-500 font-mono text-sm text-center py-8">載入中…</div>}
 

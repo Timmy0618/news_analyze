@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { FiChevronUp, FiChevronDown } from 'react-icons/fi'
-import { supabase } from '../lib/supabase'
+import { newsApi, errorMessage } from '../lib/newsApi'
 import type { BiasCluster, BiasSourceStat } from '../types'
+import { ErrorBanner } from './ui'
 
 const VERDICTS = ['side_a', 'neutral', 'side_b'] as const
 type Verdict = typeof VERDICTS[number]
@@ -235,33 +236,17 @@ export default function BiasPage() {
   const load = useCallback(async (d: number) => {
     setLoading(true)
     setError('')
-
-    const dateFrom = isoDaysAgo(d)
-    const dateTo = todayIso()
-
-    const [fn, rpc] = await Promise.all([
-      supabase.functions.invoke<{
-        run_date: string | null
-        clusters: BiasCluster[]
-      }>('bias', { body: { date_from: dateFrom, date_to: dateTo } }),
-      supabase.rpc('get_bias_stats', { date_from: dateFrom, date_to: dateTo }),
-    ])
-
-    setLoading(false)
-    setLoaded(true)
-    if (fn.error) {
-      setError(`載入失敗: ${fn.error.message}`)
-      return
+    try {
+      const report = await newsApi.bias({ dateFrom: isoDaysAgo(d), dateTo: todayIso() })
+      setRunDate(report.runDate)
+      setClusters(report.clusters)
+      setSourceStats(report.sourceStats)
+    } catch (e) {
+      setError(`載入失敗: ${errorMessage(e)}`)
+    } finally {
+      setLoading(false)
+      setLoaded(true)
     }
-    if (fn.data) {
-      setRunDate(fn.data.run_date)
-      const sorted = [...(fn.data.clusters ?? [])].sort((a, b) => {
-        const d = (b.run_date ?? '').localeCompare(a.run_date ?? '')
-        return d !== 0 ? d : b.article_count - a.article_count
-      })
-      setClusters(sorted)
-    }
-    setSourceStats(rpc.error || !rpc.data ? [] : (rpc.data as BiasSourceStat[]))
   }, [])
 
   useEffect(() => {
@@ -293,9 +278,7 @@ export default function BiasPage() {
         </span>
       </div>
 
-      {error && (
-        <div className="text-red-400 text-sm font-mono bg-red-900/20 border border-red-900/50 rounded-sm p-3">{error}</div>
-      )}
+      <ErrorBanner msg={error} />
 
       <SourceBiasPanel stats={sourceStats} />
 
