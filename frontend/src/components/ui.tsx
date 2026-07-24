@@ -46,6 +46,15 @@ export function Panel({
   )
 }
 
+// The one red failure banner, shared across every page. Renders nothing when
+// `msg` is empty so callers can drop it in unconditionally.
+export function ErrorBanner({ msg }: { msg: string }) {
+  if (!msg) return null
+  return (
+    <div className="text-red-400 text-sm font-mono bg-red-900/20 border border-red-900/50 rounded-sm p-3">{msg}</div>
+  )
+}
+
 // A labelled filter control (mono eyebrow over the input).
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (

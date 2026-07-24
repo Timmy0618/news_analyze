@@ -3,18 +3,9 @@ import {
   BarChart, Bar, Cell, XAxis, YAxis, Tooltip,
   LineChart, Line, CartesianGrid, ResponsiveContainer,
 } from 'recharts'
-import { Panel } from './ui'
-import { supabase } from '../lib/supabase'
-
-interface DailyCount {
-  publish_date: string
-  count: number
-}
-
-interface SourceCount {
-  source_site: string
-  count: number
-}
+import { Panel, ErrorBanner } from './ui'
+import { newsApi, errorMessage } from '../lib/newsApi'
+import type { DailyCount, SourceCount } from '../types'
 
 // Data-viz palettes per theme. Recharts/canvas need concrete color
 // strings, so we pick by theme rather than via CSS vars.
@@ -76,32 +67,33 @@ export default function TopicStats({ theme }: { theme: 'light' | 'dark' }) {
   const [totalArticles, setTotalArticles] = useState(0)
   const [dateRange, setDateRange] = useState({ min: '', max: '' })
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [days, setDays] = useState(30)
 
   useEffect(() => {
     async function load() {
       setLoading(true)
+      setError('')
 
       const since = new Date()
       since.setDate(since.getDate() - days)
       const pad = (n: number) => String(n).padStart(2, '0')
       const sinceStr = `${since.getFullYear()}-${pad(since.getMonth() + 1)}-${pad(since.getDate())}`
 
-      const { data, error } = await supabase.rpc('get_article_stats', { since_date: sinceStr })
-
-      if (error || !data) { setLoading(false); return }
-
-      const daily: { publish_date: string; count: number }[] = data.daily ?? []
-      const bySite: { source_site: string; count: number }[] = data.by_site ?? []
-
-      setTotalArticles(Number(data.total ?? 0))
-      setDateRange({
-        min: daily[0]?.publish_date ?? '',
-        max: daily[daily.length - 1]?.publish_date ?? '',
-      })
-      setDaily(daily.map(r => ({ publish_date: r.publish_date, count: Number(r.count) })))
-      setBySite(bySite.map(r => ({ source_site: r.source_site, count: Number(r.count) })))
-      setLoading(false)
+      try {
+        const s = await newsApi.stats(sinceStr)
+        setTotalArticles(s.total)
+        setDaily(s.daily)
+        setBySite(s.bySite)
+        setDateRange({
+          min: s.daily[0]?.publish_date ?? '',
+          max: s.daily[s.daily.length - 1]?.publish_date ?? '',
+        })
+      } catch (e) {
+        setError(errorMessage(e))
+      } finally {
+        setLoading(false)
+      }
     }
     load()
   }, [days])
@@ -110,6 +102,7 @@ export default function TopicStats({ theme }: { theme: 'light' | 'dark' }) {
 
   return (
     <div className="space-y-5">
+      <ErrorBanner msg={error} />
       {/* window selector — segmented mono control */}
       <div className="flex items-center justify-between gap-3">
         <span className="eyebrow">Window</span>

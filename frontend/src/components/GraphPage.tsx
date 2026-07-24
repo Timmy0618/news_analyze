@@ -1,9 +1,9 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import { FiShare2, FiChevronRight } from 'react-icons/fi'
-import { supabase } from '../lib/supabase'
+import { newsApi, errorMessage } from '../lib/newsApi'
 import type { GraphData, GraphNode } from '../types'
 import ForceGraph2D from 'react-force-graph-2d'
-import { Field, inputCls, btnPrimary } from './ui'
+import { Field, inputCls, btnPrimary, ErrorBanner } from './ui'
 
 interface GraphPalette {
   nodes: string[]
@@ -69,24 +69,12 @@ export default function GraphPage({ theme }: { theme: 'light' | 'dark' }) {
     setSelectedId(null)
     setHoverId(null)
 
-    const { data, error: fnErr } = await supabase.functions.invoke<{
-      nodes: GraphNode[]
-      edges: { source: string; target: string; weight: number }[]
-    }>('graph', {
-      body: {
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-        source: source || undefined,
-        max_nodes: maxNodes,
-        k,
-      },
-    })
-
-    setLoading(false)
-    if (fnErr) {
-      setError(`建立圖譜失敗: ${fnErr.message}`)
-    } else if (data) {
-      setGraphData({ nodes: data.nodes, links: data.edges })
+    try {
+      setGraphData(await newsApi.graph({ dateFrom, dateTo, source, maxNodes, k }))
+    } catch (e) {
+      setError(`建立圖譜失敗: ${errorMessage(e)}`)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -238,7 +226,7 @@ export default function GraphPage({ theme }: { theme: 'light' | 'dark' }) {
         </button>
       </div>
 
-      {error && <div className="text-red-400 text-sm font-mono bg-red-900/20 border border-red-900/50 rounded-sm p-3">{error}</div>}
+      <ErrorBanner msg={error} />
 
       {graphData && (
         <div className="flex gap-4 items-stretch">

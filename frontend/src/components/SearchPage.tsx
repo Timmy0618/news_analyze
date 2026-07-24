@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { FiSearch } from 'react-icons/fi'
-import { supabase } from '../lib/supabase'
+import { newsApi, errorMessage } from '../lib/newsApi'
 import type { SearchResult } from '../types'
-import { Field, inputCls, selectCls, btnPrimary } from './ui'
+import { Field, inputCls, selectCls, btnPrimary, ErrorBanner } from './ui'
 
 type SearchField = 'title' | 'summary' | 'both'
 
@@ -43,22 +43,12 @@ export default function SearchPage() {
     setError('')
     setResults([])
 
-    const { data, error: fnErr } = await supabase.functions.invoke<{ results: SearchResult[] }>('search', {
-      body: {
-        query: query.trim(),
-        top_k: topK,
-        search_field: searchField,
-        source: source || undefined,
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-      },
-    })
-
-    setLoading(false)
-    if (fnErr) {
-      setError(`搜尋失敗: ${fnErr.message}`)
-    } else if (data?.results) {
-      setResults(data.results)
+    try {
+      setResults(await newsApi.search({ query, topK, searchField, source, dateFrom, dateTo }))
+    } catch (e) {
+      setError(`搜尋失敗: ${errorMessage(e)}`)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -108,7 +98,7 @@ export default function SearchPage() {
         </div>
       </div>
 
-      {error && <div className="text-red-400 text-sm font-mono bg-red-900/20 border border-red-900/50 rounded-sm p-3">{error}</div>}
+      <ErrorBanner msg={error} />
 
       {results.length > 0 && (
         <div className="space-y-2">
