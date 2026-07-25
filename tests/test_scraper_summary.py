@@ -4,7 +4,9 @@ from news_scraper.scraper import NewsScraper
 
 def _bare_instance():
     # 繞過 __init__(需要 config/網路);只測純方法 build_article_record
-    return NewsScraper.__new__(NewsScraper)
+    inst = NewsScraper.__new__(NewsScraper)
+    inst.fetch_byline = lambda url: "未提及"   # 不讓署名 fallback 連網
+    return inst
 
 
 def test_build_article_record_uses_summary_from_content(monkeypatch):
