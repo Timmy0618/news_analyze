@@ -13,6 +13,7 @@ import type {
   GraphEdge,
   BiasCluster,
   BiasSourceStat,
+  BiasReporterStat,
   NewsArticle,
   ArticleStats,
 } from '../types'
@@ -95,20 +96,26 @@ export interface BiasReport {
   runDate: string | null
   clusters: BiasCluster[]
   sourceStats: BiasSourceStat[]
+  reporterStats: BiasReporterStat[]
 }
 
 async function bias(p: BiasParams): Promise<BiasReport> {
-  const [report, sourceStats] = await Promise.all([
+  const [report, sourceStats, reporterStats] = await Promise.all([
     invokeFn<{ run_date: string | null; clusters: BiasCluster[] }>('bias', {
       date_from: p.dateFrom,
       date_to: p.dateTo,
     }),
-    // Per-source stats are an auxiliary aggregate: a failure here must not blank
-    // the whole page, so it degrades to [] rather than throwing past the seam.
+    // Per-source/per-reporter stats are auxiliary aggregates: a failure here must
+    // not blank the whole page, so they degrade to [] rather than throwing past
+    // the seam.
     callRpc<BiasSourceStat[]>('get_bias_stats', {
       date_from: p.dateFrom,
       date_to: p.dateTo,
     }).catch(() => [] as BiasSourceStat[]),
+    callRpc<BiasReporterStat[]>('get_reporter_bias_stats', {
+      date_from: p.dateFrom,
+      date_to: p.dateTo,
+    }).catch(() => [] as BiasReporterStat[]),
   ])
 
   const clusters = [...(report.clusters ?? [])].sort((a, b) => {
@@ -116,7 +123,12 @@ async function bias(p: BiasParams): Promise<BiasReport> {
     return byDate !== 0 ? byDate : b.article_count - a.article_count
   })
 
-  return { runDate: report.run_date, clusters, sourceStats: sourceStats ?? [] }
+  return {
+    runDate: report.run_date,
+    clusters,
+    sourceStats: sourceStats ?? [],
+    reporterStats: reporterStats ?? [],
+  }
 }
 
 export interface BrowseParams {
