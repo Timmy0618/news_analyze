@@ -78,57 +78,66 @@ def parse_llm_map(raw: str, originals: list[str]) -> dict[str, str]:
     return {k: normalize(v) for k, v in data.items() if k in allowed and isinstance(v, str)}
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--apply", action="store_true", help="真的寫入 DB（預設只印不寫）")
-    # 27B reasoning model 一批 50 個要吐 50 筆 JSON，實測會超過 120s 預設 timeout
-    parser.add_argument("--batch", type=int, default=20, help="每批丟給 LLM 幾個字串")
-    args = parser.parse_args()
+def clean_reporters(apply: bool = False, batch: int = 20) -> dict[str, str]:
+    """清一輪髒 reporter，回傳 {原字串: 清理後}。apply=False 時只算不寫。
 
+    排程每天跑一次，所以「這批 LLM 掛了」不需要在這輪硬處理——沒回的值原封
+    不動留著，明天那輪會再看到它。絕不因為 LLM 失敗就把資料覆寫成未提及。
+    """
     session = Session()
     # 只讀 reporter 這一欄的相異值，不撈整列（見 ARCHITECTURE.md §3 egress 守則）
     rows = session.query(NewsArticle.reporter).distinct().all()
     dirty = sorted(
         {r[0] for r in rows if r[0] and r[0] != NO_BYLINE and not looks_like_name(r[0])}
     )
-    print(f"相異髒值 {len(dirty)} 個\n")
+    print(f"相異髒值 {len(dirty)} 個")
     if not dirty:
-        return
+        return {}
 
     llm = create_llm(temperature=0, timeout=600)
     mapping: dict[str, str] = {}
-    for i in range(0, len(dirty), args.batch):
-        chunk = dirty[i:i + args.batch]
-        print(f"批次 {i // args.batch + 1}：{len(chunk)} 個字串 → LLM")
-        raw = llm.invoke(PROMPT.format(items=json.dumps(chunk, ensure_ascii=False, indent=2)))
+    for i in range(0, len(dirty), batch):
+        chunk = dirty[i:i + batch]
+        print(f"批次 {i // batch + 1}：{len(chunk)} 個字串 → LLM")
+        try:
+            raw = llm.invoke(PROMPT.format(items=json.dumps(chunk, ensure_ascii=False, indent=2)))
+        except Exception as exc:
+            print(f"  ⚠ LLM 呼叫失敗，這批留到下次：{exc}")
+            continue
         parsed = parse_llm_map(str(raw.content), chunk)
-        if not parsed:
-            print("  ⚠ 這批回應解析不出 JSON，跳過")
-        missing = [c for c in chunk if c not in parsed]
-        if missing:
-            print(f"  ⚠ {len(missing)} 個沒回，視為未提及")
+        skipped = len(chunk) - len(parsed)
+        if skipped:
+            print(f"  ⚠ {skipped} 個沒回或解析不出，原值保留，下次再試")
         mapping.update(parsed)
-        mapping.update({c: NO_BYLINE for c in missing})
 
     recovered = {k: v for k, v in mapping.items() if v != NO_BYLINE}
-    print(f"\n救回人名 {len(recovered)} 個，其餘 {len(mapping) - len(recovered)} 個歸為 {NO_BYLINE}\n")
-    for old, new in sorted(recovered.items()):
-        print(f"  {old!r} → {new}")
+    print(f"\n救回人名 {len(recovered)} 個，另 {len(mapping) - len(recovered)} 個歸為 {NO_BYLINE}")
+    for old_value, new_value in sorted(recovered.items()):
+        print(f"  {old_value!r} → {new_value}")
 
-    if not args.apply:
+    if not apply:
         print(f"\n(dry-run；加 --apply 才寫入。寫入後跑 fix_missing_reporters.py 重抓 {NO_BYLINE} 的)")
-        return
+        return mapping
 
     changed = 0
-    for old, new in mapping.items():
+    for old_value, new_value in mapping.items():
         changed += (
             session.query(NewsArticle)
-            .filter(NewsArticle.reporter == old)
-            .update({NewsArticle.reporter: new}, synchronize_session=False)
+            .filter(NewsArticle.reporter == old_value)
+            .update({NewsArticle.reporter: new_value}, synchronize_session=False)
         )
     session.commit()
     print(f"\n已更新 {changed} 篇（{len(mapping)} 個相異值）")
-    print(f"接著跑：uv run python scripts/fix_missing_reporters.py  # 重抓 {NO_BYLINE} 的")
+    return mapping
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--apply", action="store_true", help="真的寫入 DB（預設只印不寫）")
+    # 27B reasoning model 一批 50 個要吐 50 筆 JSON，實測會超過 120s 預設 timeout
+    parser.add_argument("--batch", type=int, default=20, help="每批丟給 LLM 幾個字串")
+    args = parser.parse_args()
+    clean_reporters(apply=args.apply, batch=args.batch)
 
 
 if __name__ == "__main__":

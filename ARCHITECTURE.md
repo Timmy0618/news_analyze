@@ -118,6 +118,7 @@ History: `git log` commit `ca88802` and `562fc2a` are the egress-reduction passe
 | `run_scrapers` | `SCRAPE_SCHEDULE` (cron hours) or `SCRAPE_INTERVAL_MINUTES`; `SCRAPE_NO_DB` to skip DB | scrape list pages → LLM extracts `[{title,link}]` → filter existing → Firecrawl article fetch → LLM extracts reporter → insert | #1 (reads `source_url` only for dedup) |
 | `run_embeddings` | `EMBED_INTERVAL_MINUTES` (default 60); `EMBED_BATCH_SIZE` (10), `EMBED_LIMIT`, `EMBED_FORCE` | finds rows missing a vector, calls Jina, writes back via `UPDATE ... WHERE id`. Selects only `id/title/summary` + NULL flags — **never reads existing vectors** | #1 |
 | `run_obsidian_export` | daily at `OBSIDIAN_EXPORT_HOUR` (default 3), only if `OBSIDIAN_VAULT_PATH` set | exports **today's** articles to an Obsidian vault, builds a related-article map from `title_embedding` | #1 (reads `title_embedding`) |
+| `run_clean_reporters` | daily at `CLEAN_REPORTERS_HOUR` (default 2) | 用本地 LLM 清 `reporter` 欄位的髒值（只對相異字串跑）；排在 bias analysis 之前，讓當天統計吃到乾淨的名字 | #1（只讀 `reporter` 的相異值） |
 | `run_bias_analysis` | daily at `BIAS_ANALYSIS_HOUR` (default 4); `days_back=3`, `k=10`, `min_similarity=0.65` | clusters recent articles, classifies stance per article, writes `topic_clusters` + `article_bias` | calls the **graph Edge Function** for clustering; fetches article bodies via Firecrawl |
 
 ### 4c. Scrapers (`news_scraper/`, `scrapers/`)

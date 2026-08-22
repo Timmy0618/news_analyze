@@ -47,6 +47,11 @@ def run_bias_analysis(
     return _run(days_back=days_back, k=k, min_similarity=min_similarity)
 
 
+def run_clean_reporters(batch: int = 20) -> dict[str, str]:
+    from scripts.clean_reporters import clean_reporters
+    return clean_reporters(apply=True, batch=batch)
+
+
 def run_obsidian_export(vault_path: str) -> int:
     from datetime import date
     from scripts.export_to_obsidian import export_articles

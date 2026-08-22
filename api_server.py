@@ -189,6 +189,19 @@ def _setup_scheduler() -> Optional[BackgroundScheduler]:
         )
         logger.info("scheduler: obsidian export daily at %s:00 to %s", obsidian_hour, obsidian_vault)
 
+    # 排在 bias analysis（預設 4:00）之前，讓當天的統計吃到清乾淨的記者名
+    clean_reporters_hour = int(os.getenv("CLEAN_REPORTERS_HOUR", "2"))
+    from utils.scheduler.tasks import run_clean_reporters
+    scheduler.add_job(
+        run_clean_reporters,
+        "cron",
+        hour=clean_reporters_hour,
+        minute=0,
+        id="clean_reporters",
+        replace_existing=True,
+    )
+    logger.info("scheduler: clean reporters daily at %s:00", clean_reporters_hour)
+
     bias_analysis_hour = int(os.getenv("BIAS_ANALYSIS_HOUR", "4"))
     from utils.scheduler.tasks import run_bias_analysis
     scheduler.add_job(
