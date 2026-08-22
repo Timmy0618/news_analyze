@@ -131,6 +131,10 @@ new ones in `scripts/run_all_scrapers.py`. (Full guide in `CLAUDE.md`.)
   calls the `graph` Edge Function; `_fetch_article_content()` uses Firecrawl.
 - `scripts/export_to_obsidian.py` — Obsidian export (also scheduled).
 - `scripts/fix_missing_reporters.py` — re-scrape articles whose reporter is `未提及`.
+- `scripts/clean_reporters.py` — 用本地 LLM 清理 `reporter` 欄位裡抓壞的舊值
+  （byline 修好之前留下的）。只對**相異字串**跑 LLM，不是逐篇；救不回來的歸為
+  `未提及`，交給 `fix_missing_reporters.py` 重抓。雙掛名以「、」保留，
+  `get_reporter_bias_stats` 會 unnest 成多個人。預設 dry-run。
 - `analyze_news_topics.py` — daily keyword/topic stats → `news_topic_statistics`
   (manual CLI, not scheduled).
 
