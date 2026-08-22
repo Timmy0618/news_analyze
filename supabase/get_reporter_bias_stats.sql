@@ -1,8 +1,8 @@
 -- 在 Supabase Dashboard → SQL Editor 執行此檔案
--- 記者層級的「黨派率」：該記者在期間內被判為非中立的文章比例。
+-- 記者層級的「中立率」：該記者在期間內被判為中立的文章比例。低 = 立場鮮明。
 -- 伺服器端聚合，不受 client 端 1000 列上限影響。
 --
--- 兩個刻意的設計：
+-- 三個刻意的設計：
 -- 1. 不 join topic_clusters —— 這裡不管主題，只問「這個人發過偏頗文章的比例」。
 --    期間因此用 na.publish_date（文章何時發），不是 tc.run_date（何時被分析）。
 -- 2. 先 per-article 收斂再聚合：一篇文章可能落在多個 cluster
@@ -20,17 +20,17 @@ RETURNS json
 LANGUAGE sql
 STABLE
 AS $$
-  SELECT COALESCE(json_agg(row_to_json(t) ORDER BY t.partisan_rate DESC, t.total DESC), '[]')
+  SELECT COALESCE(json_agg(row_to_json(t) ORDER BY t.neutral_rate ASC, t.total DESC), '[]')
   FROM (
     SELECT
       a.reporter                                    AS reporter,
       a.source_site                                 AS source_site,
       COUNT(*)                                      AS total,
-      COUNT(*) FILTER (WHERE a.is_partisan)         AS partisan,
+      COUNT(*) FILTER (WHERE NOT a.is_partisan)     AS neutral,
       ROUND(
-        COUNT(*) FILTER (WHERE a.is_partisan)::numeric / NULLIF(COUNT(*), 0),
+        COUNT(*) FILTER (WHERE NOT a.is_partisan)::numeric / NULLIF(COUNT(*), 0),
         3
-      )                                             AS partisan_rate
+      )                                             AS neutral_rate
     FROM (
       SELECT
         na.reporter,
@@ -47,7 +47,7 @@ AS $$
     ) a
     GROUP BY a.reporter, a.source_site
     HAVING COUNT(*) >= min_articles
-    ORDER BY partisan_rate DESC, total DESC
+    ORDER BY neutral_rate ASC, total DESC
     LIMIT 50
   ) t
 $$;

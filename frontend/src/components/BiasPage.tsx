@@ -74,19 +74,19 @@ function BiasBar({ articles }: { articles: BiasCluster['articles'] }) {
 
 interface RateRow {
   label: string
-  partisan: number
+  neutral: number
   total: number
-  partisan_rate: number
+  neutral_rate: number
 }
 
-function PartisanRatePanel({ title, rows }: { title: string; rows: RateRow[] }) {
+function NeutralRatePanel({ title, rows }: { title: string; rows: RateRow[] }) {
   if (rows.length === 0) return null
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-sm">
       <div className="px-4 py-2 border-b border-gray-700 eyebrow">{title}</div>
       <div className="p-4 space-y-2">
         {rows.map((r) => {
-          const pct = Math.round((r.partisan_rate ?? 0) * 100)
+          const pct = Math.round((r.neutral_rate ?? 0) * 100)
           return (
             <div key={r.label} className="flex items-center gap-3">
               <div className="w-32 shrink-0 font-mono text-xs text-gray-400 truncate" title={r.label}>
@@ -96,7 +96,7 @@ function PartisanRatePanel({ title, rows }: { title: string; rows: RateRow[] }) 
                 <div className="bg-orange-500 h-full" style={{ width: `${pct}%` }} />
               </div>
               <div className="w-24 shrink-0 text-right font-mono text-xs text-gray-400 tabular-nums">
-                {pct}% ({r.partisan}/{r.total})
+                {pct}% ({r.neutral}/{r.total})
               </div>
             </div>
           )
@@ -106,13 +106,24 @@ function PartisanRatePanel({ title, rows }: { title: string; rows: RateRow[] }) 
   )
 }
 
+// get_bias_stats 仍回 partisan_rate（媒體那支沒動），記者那支已改回 neutral_rate，
+// 所以中立率在這裡收斂：媒體用 neutral/total 現算，兩張表才是同一個指標。
 const toRows = (stats: (BiasSourceStat | BiasReporterStat)[]): RateRow[] =>
-  stats.map((s) => ({
-    label: 'reporter' in s ? `${s.source_site} ${s.reporter}` : s.source_site,
-    partisan: s.partisan,
-    total: s.total,
-    partisan_rate: s.partisan_rate,
-  }))
+  stats.map((s) =>
+    'reporter' in s
+      ? {
+          label: `${s.source_site} ${s.reporter}`,
+          neutral: s.neutral,
+          total: s.total,
+          neutral_rate: s.neutral_rate,
+        }
+      : {
+          label: s.source_site,
+          neutral: s.neutral,
+          total: s.total,
+          neutral_rate: s.total ? s.neutral / s.total : 0,
+        }
+  )
 
 function MediaCounts({ articles }: { articles: BiasCluster['articles'] }) {
   const counts = new Map<string, { total: number; side_a: number; neutral: number; side_b: number }>()
@@ -309,9 +320,9 @@ export default function BiasPage() {
 
       <ErrorBanner msg={error} />
 
-      <PartisanRatePanel title="媒體黨派率 / Partisan rate" rows={toRows(sourceStats)} />
+      <NeutralRatePanel title="媒體中立率 / Neutral rate" rows={toRows(sourceStats)} />
 
-      <PartisanRatePanel title="記者黨派率 / Reporter partisan rate" rows={toRows(reporterStats)} />
+      <NeutralRatePanel title="記者中立率 / Reporter neutral rate" rows={toRows(reporterStats)} />
 
       {!loading && loaded && clusters.length === 0 && (
         <div className="text-gray-500 font-mono text-sm text-center py-12">此區間尚無分析資料</div>

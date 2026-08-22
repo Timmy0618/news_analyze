@@ -72,8 +72,8 @@ export interface BiasReporterStat {
   reporter: string
   source_site: string
   total: number
-  partisan: number
-  partisan_rate: number
+  neutral: number
+  neutral_rate: number
 }
 
 export interface DailyCount {
