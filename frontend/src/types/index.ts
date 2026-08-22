@@ -70,6 +70,7 @@ export interface BiasSourceStat {
 
 export interface BiasReporterStat {
   reporter: string
+  source_site: string
   total: number
   partisan: number
   partisan_rate: number

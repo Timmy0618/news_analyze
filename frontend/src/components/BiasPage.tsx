@@ -89,7 +89,7 @@ function PartisanRatePanel({ title, rows }: { title: string; rows: RateRow[] }) 
           const pct = Math.round((r.partisan_rate ?? 0) * 100)
           return (
             <div key={r.label} className="flex items-center gap-3">
-              <div className="w-24 shrink-0 font-mono text-xs text-gray-400 truncate" title={r.label}>
+              <div className="w-32 shrink-0 font-mono text-xs text-gray-400 truncate" title={r.label}>
                 {r.label}
               </div>
               <div className="flex-1 bg-gray-900 border border-gray-700 rounded-sm h-2.5 overflow-hidden">
@@ -108,7 +108,7 @@ function PartisanRatePanel({ title, rows }: { title: string; rows: RateRow[] }) 
 
 const toRows = (stats: (BiasSourceStat | BiasReporterStat)[]): RateRow[] =>
   stats.map((s) => ({
-    label: 'reporter' in s ? s.reporter : s.source_site,
+    label: 'reporter' in s ? `${s.source_site} ${s.reporter}` : s.source_site,
     partisan: s.partisan,
     total: s.total,
     partisan_rate: s.partisan_rate,

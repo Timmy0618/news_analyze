@@ -8,6 +8,9 @@
 -- 2. 先 per-article 收斂再聚合：一篇文章可能落在多個 cluster
 --    （article_bias 的 unique 是 (cluster_id, article_id)），直接 count 會重複計。
 --    只要任一 cluster 判為非中立，這篇就算偏頗（bool_or）。
+-- 3. 以 (reporter, source_site) 為單位，不是只看 reporter：記者只有名字沒有
+--    identity，中時的「王小明」和三立的「王小明」不見得是同一人，只 GROUP BY
+--    名字會把兩個人的比例攪在一起。前端也照這個組合顯示成「中時 王小明」。
 CREATE OR REPLACE FUNCTION get_reporter_bias_stats(
   date_from date,
   date_to date,
@@ -21,6 +24,7 @@ AS $$
   FROM (
     SELECT
       a.reporter                                    AS reporter,
+      a.source_site                                 AS source_site,
       COUNT(*)                                      AS total,
       COUNT(*) FILTER (WHERE a.is_partisan)         AS partisan,
       ROUND(
@@ -30,6 +34,7 @@ AS $$
     FROM (
       SELECT
         na.reporter,
+        na.source_site,
         bool_or(ab.verdict IN ('side_a', 'side_b')) AS is_partisan
       FROM article_bias ab
       JOIN news_articles na ON na.id = ab.article_id
@@ -37,9 +42,10 @@ AS $$
         AND na.publish_date <= date_to
         AND na.reporter IS NOT NULL
         AND na.reporter <> '未提及'
-      GROUP BY ab.article_id, na.reporter
+        AND na.source_site IS NOT NULL
+      GROUP BY ab.article_id, na.reporter, na.source_site
     ) a
-    GROUP BY a.reporter
+    GROUP BY a.reporter, a.source_site
     HAVING COUNT(*) >= min_articles
     ORDER BY partisan_rate DESC, total DESC
     LIMIT 50
