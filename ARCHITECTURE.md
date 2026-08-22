@@ -153,6 +153,7 @@ new ones in `scripts/run_all_scrapers.py`. (Full guide in `CLAUDE.md`.)
 | `get_distinct_sources()` | BrowsePage dropdown | distinct `source_site[]` server-side (avoids a full-column scan to the client) |
 | `get_article_stats(since_date)` | TopicStats | `{ daily, by_site, total }` aggregates |
 | `get_bias_stats(date_from, date_to)` | BiasPage | per-source `total/neutral/partisan/partisan_rate` |
+| `get_reporter_bias_stats(date_from, date_to, min_articles=3)` | BiasPage | per-reporter `total/partisan/partisan_rate`.不 join `topic_clusters`（不管主題），期間用 `publish_date`；先 per-article `bool_or` 收斂再聚合，避免一篇文章橫跨多個 cluster 被重複計。排除 `未提及`/NULL，`LIMIT 50` |
 | `match_articles(...)` | `search` Edge Function | pgvector cosine search, returns scalars + `similarity` only |
 | `revoke_embedding_columns.sql` | — (one-time) | revoke `SELECT` on embedding columns from `anon`/`authenticated` |
 
@@ -168,7 +169,7 @@ call the Python `api_server.py`.**
 |--------------------------|--------------|---------|
 | `SearchPage.tsx` | `functions.invoke('search')` | Edge Fn |
 | `GraphPage.tsx` | `functions.invoke('graph')` | Edge Fn |
-| `BiasPage.tsx` | `functions.invoke('bias')` + `rpc('get_bias_stats')` | Edge Fn + RPC |
+| `BiasPage.tsx` | `functions.invoke('bias')` + `rpc('get_bias_stats')` + `rpc('get_reporter_bias_stats')` | Edge Fn + RPC |
 | `BrowsePage.tsx` | `.from('news_articles').select(...)` paginated (`PAGE_SIZE=50`) + `rpc('get_distinct_sources')` | PostgREST + RPC |
 | `TopicStats.tsx` | `rpc('get_article_stats')` | RPC |
 

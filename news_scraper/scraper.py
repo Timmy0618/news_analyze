@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from utils.article_content import summarize_article
-from news_scraper.byline import extract_byline
+from news_scraper.byline import NO_BYLINE, extract_byline, extract_byline_from_html
 
 
 def filter_existing_links(links: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
@@ -365,6 +365,11 @@ class NewsScraper:
         print(f"  ✓ 提取完成，找到 {len(links)} 個符合日期的新聞")
         return links
 
+    def fetch_byline(self, url: str) -> str:
+        """Firecrawl markdown 沒有署名時，直接抓原始 HTML 補（三立/中時的記者名只在 JSON-LD）。"""
+        html = self.scrape_list_page(url)   # 純 requests，不經 Firecrawl
+        return extract_byline_from_html(html) if html else NO_BYLINE
+
     def build_article_record(
         self,
         title: str,
@@ -374,6 +379,8 @@ class NewsScraper:
     ) -> Dict:
         """由已抓取的文章全文組出文章記錄;大綱由本地 LLM 摘要(無全文則留空)。"""
         reporter = extract_byline(article_content)
+        if reporter == NO_BYLINE:
+            reporter = self.fetch_byline(link)
         summary = summarize_article(article_content) if article_content else ""
         return {
             "標題": title,

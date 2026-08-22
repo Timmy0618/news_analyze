@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { FiChevronUp, FiChevronDown } from 'react-icons/fi'
 import { newsApi, errorMessage } from '../lib/newsApi'
-import type { BiasCluster, BiasSourceStat } from '../types'
+import type { BiasCluster, BiasSourceStat, BiasReporterStat } from '../types'
 import { ErrorBanner } from './ui'
 
 const VERDICTS = ['side_a', 'neutral', 'side_b'] as const
@@ -72,24 +72,31 @@ function BiasBar({ articles }: { articles: BiasCluster['articles'] }) {
   )
 }
 
-function SourceBiasPanel({ stats }: { stats: BiasSourceStat[] }) {
-  if (stats.length === 0) return null
+interface RateRow {
+  label: string
+  partisan: number
+  total: number
+  partisan_rate: number
+}
+
+function PartisanRatePanel({ title, rows }: { title: string; rows: RateRow[] }) {
+  if (rows.length === 0) return null
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-sm">
-      <div className="px-4 py-2 border-b border-gray-700 eyebrow">媒體黨派率 / Partisan rate</div>
+      <div className="px-4 py-2 border-b border-gray-700 eyebrow">{title}</div>
       <div className="p-4 space-y-2">
-        {stats.map((s) => {
-          const pct = Math.round((s.partisan_rate ?? 0) * 100)
+        {rows.map((r) => {
+          const pct = Math.round((r.partisan_rate ?? 0) * 100)
           return (
-            <div key={s.source_site} className="flex items-center gap-3">
-              <div className="w-24 shrink-0 font-mono text-xs text-gray-400 truncate" title={s.source_site}>
-                {s.source_site}
+            <div key={r.label} className="flex items-center gap-3">
+              <div className="w-24 shrink-0 font-mono text-xs text-gray-400 truncate" title={r.label}>
+                {r.label}
               </div>
               <div className="flex-1 bg-gray-900 border border-gray-700 rounded-sm h-2.5 overflow-hidden">
                 <div className="bg-orange-500 h-full" style={{ width: `${pct}%` }} />
               </div>
               <div className="w-24 shrink-0 text-right font-mono text-xs text-gray-400 tabular-nums">
-                {pct}% ({s.partisan}/{s.total})
+                {pct}% ({r.partisan}/{r.total})
               </div>
             </div>
           )
@@ -98,6 +105,14 @@ function SourceBiasPanel({ stats }: { stats: BiasSourceStat[] }) {
     </div>
   )
 }
+
+const toRows = (stats: (BiasSourceStat | BiasReporterStat)[]): RateRow[] =>
+  stats.map((s) => ({
+    label: 'reporter' in s ? s.reporter : s.source_site,
+    partisan: s.partisan,
+    total: s.total,
+    partisan_rate: s.partisan_rate,
+  }))
 
 function MediaCounts({ articles }: { articles: BiasCluster['articles'] }) {
   const counts = new Map<string, { total: number; side_a: number; neutral: number; side_b: number }>()
@@ -227,31 +242,45 @@ function ClusterCard({ cluster }: { cluster: BiasCluster }) {
 export default function BiasPage() {
   const [clusters, setClusters] = useState<BiasCluster[]>([])
   const [sourceStats, setSourceStats] = useState<BiasSourceStat[]>([])
+  const [reporterStats, setReporterStats] = useState<BiasReporterStat[]>([])
   const [runDate, setRunDate] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState('')
   const [days, setDays] = useState(7)
 
-  const load = useCallback(async (d: number) => {
-    setLoading(true)
-    setError('')
-    try {
-      const report = await newsApi.bias({ dateFrom: isoDaysAgo(d), dateTo: todayIso() })
-      setRunDate(report.runDate)
-      setClusters(report.clusters)
-      setSourceStats(report.sourceStats)
-    } catch (e) {
-      setError(`載入失敗: ${errorMessage(e)}`)
-    } finally {
-      setLoading(false)
-      setLoaded(true)
-    }
-  }, [])
-
+  // Fetch lives inside the effect (same shape as TopicStats): a useCallback
+  // called straight from the effect body trips react-hooks/set-state-in-effect.
+  // `stale` drops a slow response whose window the user already moved past.
   useEffect(() => {
-    load(days)
-  }, [days, load])
+    let stale = false
+
+    async function load() {
+      setLoading(true)
+      setError('')
+      try {
+        const report = await newsApi.bias({ dateFrom: isoDaysAgo(days), dateTo: todayIso() })
+        if (stale) return
+        setRunDate(report.runDate)
+        setClusters(report.clusters)
+        setSourceStats(report.sourceStats)
+        setReporterStats(report.reporterStats)
+      } catch (e) {
+        if (stale) return
+        setError(`載入失敗: ${errorMessage(e)}`)
+      } finally {
+        if (!stale) {
+          setLoading(false)
+          setLoaded(true)
+        }
+      }
+    }
+
+    load()
+    return () => {
+      stale = true
+    }
+  }, [days])
 
   return (
     <div className="space-y-4">
@@ -280,7 +309,9 @@ export default function BiasPage() {
 
       <ErrorBanner msg={error} />
 
-      <SourceBiasPanel stats={sourceStats} />
+      <PartisanRatePanel title="媒體黨派率 / Partisan rate" rows={toRows(sourceStats)} />
+
+      <PartisanRatePanel title="記者黨派率 / Reporter partisan rate" rows={toRows(reporterStats)} />
 
       {!loading && loaded && clusters.length === 0 && (
         <div className="text-gray-500 font-mono text-sm text-center py-12">此區間尚無分析資料</div>

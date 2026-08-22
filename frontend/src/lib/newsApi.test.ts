@@ -31,6 +31,21 @@ describe('newsApi.graph', () => {
   })
 })
 
+describe('newsApi.bias', () => {
+  test('degrades the auxiliary stat RPCs to [] without blanking the clusters', async () => {
+    invoke.mockResolvedValue({
+      data: { run_date: '2026-08-22', clusters: [{ id: 1, run_date: '2026-08-22', article_count: 2 }] },
+      error: null,
+    })
+    rpc.mockResolvedValue({ data: null, error: { message: 'rpc down' } })
+
+    const r = await newsApi.bias({ dateFrom: '2026-08-01', dateTo: '2026-08-22' })
+    expect(r.clusters).toHaveLength(1)
+    expect(r.sourceStats).toEqual([])
+    expect(r.reporterStats).toEqual([])
+  })
+})
+
 describe('error contract', () => {
   test('throws NewsApiError when an edge function errors', async () => {
     invoke.mockResolvedValue({ data: null, error: { message: 'boom' } })

@@ -68,6 +68,13 @@ export interface BiasSourceStat {
   partisan_rate: number
 }
 
+export interface BiasReporterStat {
+  reporter: string
+  total: number
+  partisan: number
+  partisan_rate: number
+}
+
 export interface DailyCount {
   publish_date: string
   count: number
