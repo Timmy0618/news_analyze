@@ -39,6 +39,8 @@ def create_llm(
         model=model,
         temperature=temperature,
         timeout=timeout,
+        # ponytail: 摘要/JSON 抽取不需要推理，thinking 會讓長文撞 timeout 導致大綱存空白
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
 
 
