@@ -58,7 +58,7 @@ class TestExtractJson:
 
 class TestTagsForUrl:
     def test_ltn(self):
-        assert _tags_for_url("https://news.ltn.com.tw/news/politics/123") == ["article"]
+        assert _tags_for_url("https://news.ltn.com.tw/news/politics/123") == ["div.text"]
 
     def test_tvbs(self):
         assert _tags_for_url("https://news.tvbs.com.tw/politics/123") == ["article"]
@@ -184,22 +184,17 @@ class TestFetchArticleContent:
         result = _fetch_article_content("https://news.ltn.com.tw/news/123")
         assert result == VALID_ARTICLE
         first_call_payload = mock_post.call_args_list[0][1]["json"]
-        assert first_call_payload.get("includeTags") == ["article"]
+        assert first_call_payload.get("includeTags") == ["div.text"]
         assert first_call_payload.get("onlyMainContent") is False
         assert mock_post.call_count == 1  # no fallback needed
 
-    def test_fallback_triggered_when_primary_invalid(self, mocker):
+    def test_known_site_has_no_only_main_fallback(self, mocker):
+        # 已知站台選擇器抓不到就算失敗，不退回 onlyMainContent（那只會回導覽列）
         mock_post = mocker.patch("scripts.analyze_bias.requests.post")
-        # First call returns nav junk, second returns valid article
-        mock_post.return_value.json.side_effect = [
-            {"data": {"markdown": "短導覽"}},
-            {"data": {"markdown": VALID_ARTICLE}},
-        ]
+        mock_post.return_value.json.return_value = {"data": {"markdown": "短導覽"}}
         result = _fetch_article_content("https://news.ltn.com.tw/news/123")
-        assert result == VALID_ARTICLE
-        assert mock_post.call_count == 2
-        fallback_payload = mock_post.call_args_list[1][1]["json"]
-        assert fallback_payload.get("onlyMainContent") is True
+        assert result is None
+        assert mock_post.call_count == 1
 
     def test_unknown_site_skips_to_only_main_content(self, mocker):
         mock_post = mocker.patch("scripts.analyze_bias.requests.post")
@@ -210,12 +205,12 @@ class TestFetchArticleContent:
         assert "includeTags" not in payload
         assert payload.get("onlyMainContent") is True
 
-    def test_both_calls_fail_returns_none(self, mocker):
+    def test_unknown_site_invalid_returns_none(self, mocker):
         mock_post = mocker.patch("scripts.analyze_bias.requests.post")
         mock_post.return_value.json.return_value = {"data": {"markdown": "短"}}
-        result = _fetch_article_content("https://news.ltn.com.tw/news/123")
+        result = _fetch_article_content("https://unknown-site.com/news/1")
         assert result is None
-        assert mock_post.call_count == 2
+        assert mock_post.call_count == 1
 
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ from utils.logger import get_logger
 logger = get_logger("article_content")
 
 SITE_TAGS: dict[str, list[str]] = {
-    "ltn.com.tw":     ["article"],
+    "ltn.com.tw":     ["div.text"],  # 內文在 div.text，article 標籤在 LTN 抓不到東西
     "tvbs.com.tw":    ["article"],
     "setn.com":       ["article"],
     "cna.com.tw":     ["article"],
@@ -63,10 +63,13 @@ def fetch_article_content(url: str, firecrawl_url: str | None = None) -> str | N
 
     tags = _tags_for_url(url)
     if tags:
+        # ponytail: 已知站台不做 onlyMainContent fallback。LTN 的 fallback 只會回導覽列+廣告，
+        # 而那堆連結騙得過 is_valid_content，最後餵垃圾給 LLM。抓不到就當抓取失敗（會被 skip）。
         content = _call(include_tags=tags, only_main=False)
         if content and is_valid_content(content):
             return content
-        logger.info(f"  Firecrawl primary failed/invalid, trying fallback: {url}")
+        logger.warning(f"  選擇器 {tags} 抓不到正文（版型可能變了）: {url}")
+        return None
 
     content = _call(include_tags=[], only_main=True)
     return content if content and is_valid_content(content) else None
