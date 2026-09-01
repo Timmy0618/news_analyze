@@ -63,7 +63,7 @@ The LLM (`utils/llm.py`) is a `ChatOpenAI` instance pointing to a local OpenAI-c
 
 ### Embedding (`scripts/generate_embeddings.py`, `utils/jina_client.py`)
 
-Queries `news_articles` rows where `title_embedding IS NULL OR summary_embedding IS NULL`, batches them, and calls Jina AI's `jina-embeddings-v5-text-small` API (configurable via env `JINA_MODEL`, default `jina-embeddings-v5-text-small`) to generate 1024-dimensional vectors. Vectors are stored back into the `title_embedding` and `summary_embedding` columns (pgvector `Vector(1024)`).
+Queries `news_articles` rows where `title_embedding IS NULL OR summary_embedding IS NULL`, batches them, and calls a local OpenAI-compatible embedding server (`EMBED_URL`, default `http://localhost:8003/v1`; `EMBED_MODEL`, default `qwen3-embed` = vLLM serving `Qwen/Qwen3-Embedding-0.6B`) to generate 1024-dimensional vectors. Vectors are stored back into the `title_embedding` and `summary_embedding` columns (pgvector `Vector(1024)`).
 
 ### API (`api_server.py`)
 
@@ -86,8 +86,9 @@ Article dict keys accepted by `save_scraper_results_to_db` support both Chinese 
 
 ```env
 DATABASE_URL=postgresql://postgres:password@host:5432/news_db
-JINA_API_KEY=...
-JINA_MODEL=jina-embeddings-v5-text-small  # Embedding model (default: jina-embeddings-v5-text-small, 1024 dimensions)
+# Embeddings: local OpenAI-compatible server (vLLM + Qwen/Qwen3-Embedding-0.6B, 1024 dims)
+EMBED_URL=http://localhost:8003/v1
+EMBED_MODEL=qwen3-embed
 
 # Local LLM server (OpenAI-compatible)
 LLM_URL=http://localhost:8000/v1
@@ -99,7 +100,7 @@ FIRECRAWL_URL=http://172.17.0.1:3002  # Firecrawl binds to the docker bridge gat
 # NewsScraper reads FIRECRAWL_URL, falling back to http://localhost:3002
 ```
 
-Firecrawl and a local LLM server must be running for scraping to work. See `docker-compose.yml` for Firecrawl setup.
+Firecrawl and a local LLM server must be running for scraping to work; the embedding server on `EMBED_URL` must be up for the embed phase. See `docker-compose.yml` for Firecrawl setup.
 
 ## Adding a New Scraper
 

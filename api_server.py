@@ -47,8 +47,8 @@ app = FastAPI(
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Jina AI 設定（向後兼容）
-JINA_API_KEY = os.getenv("JINA_API_KEY")
+# Embedding server（本機 OpenAI 相容）
+EMBED_URL = os.getenv("EMBED_URL", "http://localhost:8003/v1")
 
 
 def _setup_scheduler() -> Optional[BackgroundScheduler]:
@@ -251,7 +251,7 @@ async def health_check():
     return {
         "status": "ok",
         "database": db_status,
-        "jina_api": "ok" if JINA_API_KEY else "missing_api_key"
+        "embed_api": EMBED_URL
     }
 
 
