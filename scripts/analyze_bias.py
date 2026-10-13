@@ -4,7 +4,7 @@
 流程：
 1. 呼叫 Supabase graph Edge Function 取得文章分群
 2. 每個 cluster：LLM 判斷主題 + 兩個對立立場
-3. 每篇文章：Firecrawl 抓全文 → LLM 判斷立場（中立/偏A方/偏B方）
+3. 每篇文章：Firecrawl 抓全文 → d3-mini 判斷立場（中立/偏A方/偏B方）
 4. 結果寫入 topic_clusters + article_bias
 """
 
@@ -35,6 +35,7 @@ logger = get_logger("analyze_bias")
 
 SUPABASE_URL = os.getenv("VITE_SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("VITE_SUPABASE_ANON_KEY", "")
+D3_URL = os.getenv("D3_URL", "http://localhost:8005")  # d3-mini 決策模型（System One API）
 
 
 def _fetch_clusters(
@@ -100,34 +101,30 @@ def _determine_topic_sides(llm, titles: list[str]) -> dict:
     return _extract_json(resp.content.strip())
 
 
-def _classify_bias(llm, topic: str, side_a: str, side_b: str, content: str) -> dict:
-    prompt = f"""主題：{topic}
-立場A：{side_a}
-立場B：{side_b}
+def _classify_bias(topic: str, side_a: str, side_b: str, title: str, content: str) -> dict:
+    """d3-mini 決策模型判斷立場：先問「是否明顯偏袒」(noul)，再問「偏哪方」(choice)。
 
-以下是新聞全文（節錄）：
-{content[:3000]}
-
-請客觀判斷這篇文章的立場。判斷依據：引用哪方來源、用何種框架描述事件、情緒化用語傾向哪方。
-三類定義（請依實際內容判斷，不要預設傾向某一類）：
-- 中立：平衡呈現雙方說法，或為純事實陳述、未明顯偏袒任一方。一般如實的事件報導通常屬於中立。
-- 偏A方：明顯偏向立場A。
-- 偏B方：明顯偏向立場B。
-
-只輸出JSON（不要其他文字），格式：
-{{"verdict": "中立|偏A方|偏B方", "reasoning": "一句話說明理由", "confidence": 0.0~1.0}}
-confidence 代表你對此判斷的信心（0~1）。"""
-
-    resp = llm.invoke([HumanMessage(content=prompt)])
-    data = _extract_json(resp.content.strip())
-    verdict_map = {"中立": "neutral", "偏A方": "side_a", "偏B方": "side_b"}
-    data["verdict"] = verdict_map.get(data.get("verdict", "中立"), "neutral")
-    try:
-        conf = float(data.get("confidence"))
-        data["confidence"] = max(0.0, min(1.0, conf))
-    except (TypeError, ValueError):
-        data["confidence"] = None
-    return data
+    吃全文：同批 61 篇與舊 LLM 判決一致率，全文 75% vs DB 大綱 56%（大綱把立場洗掉了）。
+    """
+    resp = requests.post(f"{D3_URL}/v1/systemone", json={
+        "state": json.dumps({"主題": topic, "標題": title, "新聞內容": content[:3000]}, ensure_ascii=False),
+        "questions": {
+            "slanted": {"type": "noul", "instructions": "這篇報導明顯偏袒該主題的其中一方。",
+                        "criteria": {"false": "平衡呈現雙方說法，或純事實陳述", "true": "明顯偏袒一方"}},
+            "side": {"type": "choice", "instructions": "這篇報導偏袒哪一方？",
+                     "criteria": {"a": side_a, "b": side_b}},
+        },
+    }, timeout=60)
+    resp.raise_for_status()
+    ans = resp.json()["answers"]
+    p_slant = ans["slanted"]["noul"]
+    side_probs = ans["side"]["probabilities"]
+    reasoning = f"d3-mini：偏頗機率 {p_slant:.2f}，{side_a} {side_probs['a']:.2f} / {side_b} {side_probs['b']:.2f}"
+    # ponytail: 門檻固定 0.5；d3 偏保守（傾向判中立），要調再用快取全文掃門檻
+    if p_slant <= 0.5:
+        return {"verdict": "neutral", "reasoning": reasoning, "confidence": 1 - p_slant}
+    side = ans["side"]["choice"]
+    return {"verdict": f"side_{side}", "reasoning": reasoning, "confidence": p_slant * side_probs[side]}
 
 
 def _existing_cluster_article_ids(db, run_date) -> list[set[int]]:
@@ -224,7 +221,7 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
             db.add(tc)
             db.flush()
 
-            # 非爭議主題：全部標記 neutral，不抓全文、不呼叫 LLM 分類
+            # 非爭議主題：全部標記 neutral，不抓全文、不呼叫 d3 分類
             if not is_controversial:
                 logger.info(f"Cluster '{topic}'（資訊型，{len(valid_articles)} 篇）→ 全部中立")
                 neutral_count = 0
@@ -266,9 +263,9 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
                     continue
 
                 try:
-                    result = _classify_bias(llm, topic, side_a, side_b, content)
+                    result = _classify_bias(topic, side_a, side_b, art.get("title", ""), content)
                 except Exception as e:
-                    logger.warning(f"  LLM 分類失敗 {art_url}: {e}")
+                    logger.warning(f"  d3-mini 分類失敗 {art_url}: {e}")
                     continue
 
                 db.add(ArticleBias(

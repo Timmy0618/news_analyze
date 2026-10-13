@@ -8,13 +8,14 @@ Covers:
 - _fetch_clusters: Supabase graph edge function call
 - _fetch_article_content: two-stage Firecrawl fetch (primary + fallback)
 - _determine_topic_sides: LLM topic/sides extraction
-- _classify_bias: LLM bias classification + verdict mapping
+- _classify_bias: d3-mini bias classification + verdict mapping
 - run_bias_analysis: full pipeline with mocked external calls
 """
 
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from scripts.analyze_bias import (
     _classify_bias,
@@ -256,50 +257,49 @@ class TestDetermineTopicSides:
 # _classify_bias
 # ---------------------------------------------------------------------------
 
+def _d3_response(p_slant: float, choice: str = "a", p_a: float = 0.9) -> MagicMock:
+    resp = MagicMock()
+    resp.json.return_value = {"answers": {
+        "slanted": {"type": "noul", "noul": p_slant},
+        "side": {"type": "choice", "choice": choice, "probabilities": {"a": p_a, "b": 1 - p_a}},
+    }}
+    return resp
+
+
 class TestClassifyBias:
-    def _make_llm(self, response_text: str) -> MagicMock:
-        llm = MagicMock()
-        llm.invoke.return_value = MagicMock(content=response_text)
-        return llm
-
-    def test_neutral_verdict(self):
-        llm = self._make_llm('{"verdict": "中立", "reasoning": "平衡引用雙方"}')
-        result = _classify_bias(llm, "核電", "支持", "反對", "文章內文")
+    def test_low_slant_is_neutral(self, mocker):
+        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response(0.2))
+        result = _classify_bias("核電", "支持", "反對", "標題", "文章內文")
         assert result["verdict"] == "neutral"
-        assert result["reasoning"] == "平衡引用雙方"
+        assert result["confidence"] == pytest.approx(0.8)
+        assert "支持 0.90" in result["reasoning"]
 
-    def test_side_a_verdict(self):
-        llm = self._make_llm('{"verdict": "偏A方", "reasoning": "強調支持論點"}')
-        result = _classify_bias(llm, "核電", "支持", "反對", "文章內文")
+    def test_side_a_verdict(self, mocker):
+        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response(0.8, "a", 0.9))
+        result = _classify_bias("核電", "支持", "反對", "標題", "文章內文")
         assert result["verdict"] == "side_a"
+        assert result["confidence"] == pytest.approx(0.72)
 
-    def test_side_b_verdict(self):
-        llm = self._make_llm('{"verdict": "偏B方", "reasoning": "引用反對意見"}')
-        result = _classify_bias(llm, "核電", "支持", "反對", "文章內文")
+    def test_side_b_verdict(self, mocker):
+        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response(0.8, "b", 0.1))
+        result = _classify_bias("核電", "支持", "反對", "標題", "文章內文")
         assert result["verdict"] == "side_b"
+        assert result["confidence"] == pytest.approx(0.72)
 
-    def test_unknown_verdict_defaults_to_neutral(self):
-        llm = self._make_llm('{"verdict": "不明", "reasoning": "無法判斷"}')
-        result = _classify_bias(llm, "核電", "支持", "反對", "文章內文")
-        assert result["verdict"] == "neutral"
+    def test_request_payload(self, mocker):
+        post = mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response(0.1))
+        _classify_bias("核電", "支持", "反對", "標題", "X" * 5000)
+        url, body = post.call_args[0][0], post.call_args[1]["json"]
+        assert url.endswith("/v1/systemone")
+        assert body["questions"]["side"]["criteria"] == {"a": "支持", "b": "反對"}
+        assert "X" * 3000 in body["state"] and "X" * 3001 not in body["state"]
 
-    def test_content_truncated_to_3000(self):
-        llm = self._make_llm('{"verdict": "中立", "reasoning": "OK"}')
-        long_content = "X" * 5000
-        _classify_bias(llm, "T", "A", "B", long_content)
-        prompt = llm.invoke.call_args[0][0][0].content
-        # The prompt should not contain more than 3000 X's
-        assert "X" * 3001 not in prompt
-
-    def test_confidence_parsed_and_clamped(self):
-        llm = self._make_llm('{"verdict": "偏A方", "reasoning": "r", "confidence": 1.4}')
-        result = _classify_bias(llm, "核電", "支持", "反對", "文章內文")
-        assert result["confidence"] == 1.0
-
-    def test_confidence_missing_is_none(self):
-        llm = self._make_llm('{"verdict": "中立", "reasoning": "r"}')
-        result = _classify_bias(llm, "核電", "支持", "反對", "文章內文")
-        assert result["confidence"] is None
+    def test_http_error_propagates(self, mocker):
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = requests.HTTPError("422")
+        mocker.patch("scripts.analyze_bias.requests.post", return_value=resp)
+        with pytest.raises(requests.HTTPError):
+            _classify_bias("核電", "支持", "反對", "標題", "文章內文")
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +366,7 @@ class TestRunBiasAnalysis:
         mocker.patch("scripts.analyze_bias._fetch_clusters", return_value=[FAKE_CLUSTER])
         mocker.patch("scripts.analyze_bias.fetch_article_content", return_value="文章內文")
         mocker.patch("scripts.analyze_bias.create_llm", return_value=mock_llm)
+        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response(0.1))
 
         mock_db = MagicMock()
         mock_db.query.return_value.filter_by.return_value.first.return_value = None
