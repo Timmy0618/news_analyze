@@ -257,41 +257,39 @@ class TestDetermineTopicSides:
 # _classify_bias
 # ---------------------------------------------------------------------------
 
-def _d3_response(p_slant: float, choice: str = "a", p_a: float = 0.9) -> MagicMock:
+def _d3_response(choice: str, prob: float = 0.8) -> MagicMock:
+    rest = (1 - prob) / 2
+    probs = {k: (prob if k == choice else rest) for k in ("neutral", "side_a", "side_b")}
     resp = MagicMock()
     resp.json.return_value = {"answers": {
-        "slanted": {"type": "noul", "noul": p_slant},
-        "side": {"type": "choice", "choice": choice, "probabilities": {"a": p_a, "b": 1 - p_a}},
+        "stance": {"type": "choice", "choice": choice, "probabilities": probs},
     }}
     return resp
 
 
 class TestClassifyBias:
-    def test_low_slant_is_neutral(self, mocker):
-        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response(0.2))
+    def test_neutral_verdict(self, mocker):
+        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response("neutral", 0.9))
         result = _classify_bias("核電", "支持", "反對", "標題", "文章內文")
-        assert result["verdict"] == "neutral"
-        assert result["confidence"] == pytest.approx(0.8)
-        assert "支持 0.90" in result["reasoning"]
+        assert result == {"verdict": "neutral", "reasoning": "未見明顯偏袒", "confidence": 0.9}
 
     def test_side_a_verdict(self, mocker):
-        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response(0.8, "a", 0.9))
+        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response("side_a", 0.7))
         result = _classify_bias("核電", "支持", "反對", "標題", "文章內文")
-        assert result["verdict"] == "side_a"
-        assert result["confidence"] == pytest.approx(0.72)
+        assert result == {"verdict": "side_a", "reasoning": "明顯偏向「支持」", "confidence": 0.7}
 
     def test_side_b_verdict(self, mocker):
-        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response(0.8, "b", 0.1))
+        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response("side_b", 0.6))
         result = _classify_bias("核電", "支持", "反對", "標題", "文章內文")
-        assert result["verdict"] == "side_b"
-        assert result["confidence"] == pytest.approx(0.72)
+        assert result == {"verdict": "side_b", "reasoning": "明顯偏向「反對」", "confidence": 0.6}
 
     def test_request_payload(self, mocker):
-        post = mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response(0.1))
+        post = mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response("neutral"))
         _classify_bias("核電", "支持", "反對", "標題", "X" * 5000)
         url, body = post.call_args[0][0], post.call_args[1]["json"]
         assert url.endswith("/v1/systemone")
-        assert body["questions"]["side"]["criteria"] == {"a": "支持", "b": "反對"}
+        assert set(body["questions"]["stance"]["criteria"]) == {"neutral", "side_a", "side_b"}
+        assert "支持" in body["questions"]["stance"]["criteria"]["side_a"]
         assert "X" * 3000 in body["state"] and "X" * 3001 not in body["state"]
 
     def test_http_error_propagates(self, mocker):
@@ -366,7 +364,7 @@ class TestRunBiasAnalysis:
         mocker.patch("scripts.analyze_bias._fetch_clusters", return_value=[FAKE_CLUSTER])
         mocker.patch("scripts.analyze_bias.fetch_article_content", return_value="文章內文")
         mocker.patch("scripts.analyze_bias.create_llm", return_value=mock_llm)
-        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response(0.1))
+        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response("neutral"))
 
         mock_db = MagicMock()
         mock_db.query.return_value.filter_by.return_value.first.return_value = None

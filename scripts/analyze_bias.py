@@ -102,29 +102,34 @@ def _determine_topic_sides(llm, titles: list[str]) -> dict:
 
 
 def _classify_bias(topic: str, side_a: str, side_b: str, title: str, content: str) -> dict:
-    """d3-mini 決策模型判斷立場：先問「是否明顯偏袒」(noul)，再問「偏哪方」(choice)。
+    """d3-mini 決策模型判斷立場：一題三選一（中立 / 偏A / 偏B），取機率最高者。
 
-    吃全文：同批 61 篇與舊 LLM 判決一致率，全文 75% vs DB 大綱 56%（大綱把立場洗掉了）。
+    同批 60 篇與舊 LLM 判決一致率：三選一 86.7% vs 拆兩題（是否偏頗 + 偏哪方）76.7%。
+    拆兩題時「偏哪方」被迫二選一，中立文章也會出現偏某方 0.99，難解讀。
+    只送前 3000 字：整篇送一致率沒提升（73% vs 77%），每篇卻慢 15 倍。
     """
     resp = requests.post(f"{D3_URL}/v1/systemone", json={
         "state": json.dumps({"主題": topic, "標題": title, "新聞內容": content[:3000]}, ensure_ascii=False),
-        "questions": {
-            "slanted": {"type": "noul", "instructions": "這篇報導明顯偏袒該主題的其中一方。",
-                        "criteria": {"false": "平衡呈現雙方說法，或純事實陳述", "true": "明顯偏袒一方"}},
-            "side": {"type": "choice", "instructions": "這篇報導偏袒哪一方？",
-                     "criteria": {"a": side_a, "b": side_b}},
-        },
+        "questions": {"stance": {
+            "type": "choice",
+            "instructions": "這篇報導對該主題的立場是？",
+            # 選項說明會影響準度：只寫名稱時一致率掉到 80%
+            "criteria": {
+                "neutral": "平衡呈現雙方說法，或純事實陳述",
+                "side_a": f"明顯偏袒「{side_a}」",
+                "side_b": f"明顯偏袒「{side_b}」",
+            },
+        }},
     }, timeout=60)
     resp.raise_for_status()
-    ans = resp.json()["answers"]
-    p_slant = ans["slanted"]["noul"]
-    side_probs = ans["side"]["probabilities"]
-    reasoning = f"d3-mini：偏頗機率 {p_slant:.2f}，{side_a} {side_probs['a']:.2f} / {side_b} {side_probs['b']:.2f}"
-    # ponytail: 門檻固定 0.5；d3 偏保守（傾向判中立），要調再用快取全文掃門檻
-    if p_slant <= 0.5:
-        return {"verdict": "neutral", "reasoning": reasoning, "confidence": 1 - p_slant}
-    side = ans["side"]["choice"]
-    return {"verdict": f"side_{side}", "reasoning": reasoning, "confidence": p_slant * side_probs[side]}
+    stance = resp.json()["answers"]["stance"]
+    verdict = stance["choice"]
+    reasoning = {
+        "neutral": "未見明顯偏袒",
+        "side_a": f"明顯偏向「{side_a}」",
+        "side_b": f"明顯偏向「{side_b}」",
+    }[verdict]
+    return {"verdict": verdict, "reasoning": reasoning, "confidence": stance["probabilities"][verdict]}
 
 
 def _existing_cluster_article_ids(db, run_date) -> list[set[int]]:
