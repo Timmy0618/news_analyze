@@ -4,7 +4,7 @@
 流程：
 1. 呼叫 Supabase graph Edge Function 取得文章分群
 2. 每個 cluster：LLM 判斷主題 + 兩個對立立場
-3. 每篇文章：Firecrawl 抓全文 → d3-mini 判斷立場（中立/偏A方/偏B方）
+3. 每篇文章：Firecrawl 抓全文 → d3-mini 判斷立場（中立/偏A方/偏B方），d3 沒把握時 LLM 複判
 4. 結果寫入 topic_clusters + article_bias
 """
 
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from datetime import date, timedelta
@@ -101,15 +102,62 @@ def _determine_topic_sides(llm, titles: list[str]) -> dict:
     return _extract_json(resp.content.strip())
 
 
-def _classify_bias(topic: str, side_a: str, side_b: str, title: str, content: str) -> dict:
-    """d3-mini 決策模型判斷立場：一題三選一（中立 / 偏A / 偏B），取機率最高者。
+D3_CONFIDENT = 0.8  # d3 最高機率 >= 此值才直接採用，否則交給本地 LLM 複判
+
+_LLM_STANCE_PROMPT = """你是新聞媒體識讀分析員。判斷這篇報導在「{topic}」上的立場。
+立場A：{side_a}
+立場B：{side_b}
+
+判斷依據（標題最重要）：
+- 標題措辭：有沒有嘲諷、貶損、誇大、驚嘆、帶情緒的形容（如「狂酸」「草包」「被打臉」「聲勢狂飆」「不捨」）
+- 引述選擇：是否只放一方的說法或只放批評某方的聲音，另一方沒有回應
+- 框架：把某方塑造成受害者／英雄，或把某方塑造成笑柄／壞人
+中立：純事實陳述、政策或官方說明、雙方說法都有呈現、措辭平實。只是報導某方的活動或政見、沒有褒貶，也算中立。
+
+標題：{title}
+內文：
+{content}
+
+只輸出JSON：{{"verdict": "neutral" 或 "side_a" 或 "side_b"}}"""
+
+
+def _strip_markdown(md: str) -> str:
+    """Firecrawl markdown 前段大多是導覽/分享鈕/圖片連結，原本前 3000 字只有約 600 字是內文。
+
+    去掉圖片、連結只留文字，只保留中文字 >= 20 的行（內文段落）。
+    """
+    md = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", md)
+    md = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", md)
+    return "\n".join(
+        line.strip() for line in md.split("\n") if sum("一" <= c <= "鿿" for c in line) >= 20
+    )
+
+
+def _llm_stance(llm, topic: str, side_a: str, side_b: str, title: str, body: str) -> str:
+    prompt = _LLM_STANCE_PROMPT.format(
+        topic=topic, side_a=side_a, side_b=side_b, title=title, content=body[:2000],
+    )
+    verdict = _extract_json(llm.invoke([HumanMessage(content=prompt)]).content).get("verdict")
+    if verdict not in ("neutral", "side_a", "side_b"):
+        raise ValueError(f"LLM 回了無效立場: {verdict}")
+    return verdict
+
+
+def _classify_bias(llm, topic: str, side_a: str, side_b: str, title: str, content: str) -> dict:
+    """立場判斷：d3-mini 一題三選一（中立 / 偏A / 偏B），d3 沒把握時交給本地 LLM 複判。
 
     同批 60 篇與舊 LLM 判決一致率：三選一 86.7% vs 拆兩題（是否偏頗 + 偏哪方）76.7%。
-    拆兩題時「偏哪方」被迫二選一，中立文章也會出現偏某方 0.99，難解讀。
     只送前 3000 字：整篇送一致率沒提升（73% vs 77%），每篇卻慢 15 倍。
+
+    d3 很愛判中立：標題一看就偏的文章常拿到中立 0.5~0.7。改成「中立 < 0.8 就判偏機率高的一方」
+    又把一堆中央社事實報導推成偏頗。31 篇人工標註（中立 14 / 偏頗 17）：
+    d3 取最高 21/31（偏頗只對 8）、中立門檻 0.8 20/31（中立只對 4）、
+    全交 LLM 25/31、d3 >= 0.8 才採用其餘交 LLM 26/31（中立 11、偏頗 15）。
+    ponytail: 門檻與 prompt 只用這 31 篇驗過；約 3/4 文章會走 LLM，篇數變多若太慢再調門檻。
     """
+    body = _strip_markdown(content)
     resp = requests.post(f"{D3_URL}/v1/systemone", json={
-        "state": json.dumps({"主題": topic, "標題": title, "新聞內容": content[:3000]}, ensure_ascii=False),
+        "state": json.dumps({"主題": topic, "標題": title, "新聞內容": body[:3000]}, ensure_ascii=False),
         "questions": {"stance": {
             "type": "choice",
             "instructions": "這篇報導對該主題的立場是？",
@@ -122,14 +170,17 @@ def _classify_bias(topic: str, side_a: str, side_b: str, title: str, content: st
         }},
     }, timeout=60)
     resp.raise_for_status()
-    stance = resp.json()["answers"]["stance"]
-    verdict = stance["choice"]
+    probs = resp.json()["answers"]["stance"]["probabilities"]
+    verdict = max(probs, key=probs.get)
+    by_llm = probs[verdict] < D3_CONFIDENT
+    if by_llm:
+        verdict = _llm_stance(llm, topic, side_a, side_b, title, body)
     reasoning = {
         "neutral": "未見明顯偏袒",
         "side_a": f"明顯偏向「{side_a}」",
         "side_b": f"明顯偏向「{side_b}」",
-    }[verdict]
-    return {"verdict": verdict, "reasoning": reasoning, "confidence": stance["probabilities"][verdict]}
+    }[verdict] + ("（LLM 複判）" if by_llm else "")
+    return {"verdict": verdict, "reasoning": reasoning, "confidence": None if by_llm else probs[verdict]}
 
 
 def _existing_cluster_article_ids(db, run_date) -> list[set[int]]:
@@ -268,9 +319,9 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
                     continue
 
                 try:
-                    result = _classify_bias(topic, side_a, side_b, art.get("title", ""), content)
+                    result = _classify_bias(llm, topic, side_a, side_b, art.get("title", ""), content)
                 except Exception as e:
-                    logger.warning(f"  d3-mini 分類失敗 {art_url}: {e}")
+                    logger.warning(f"  立場分類失敗 {art_url}: {e}")
                     continue
 
                 db.add(ArticleBias(

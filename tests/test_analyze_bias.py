@@ -267,37 +267,58 @@ def _d3_response(choice: str, prob: float = 0.8) -> MagicMock:
     return resp
 
 
+def _llm(verdict: str) -> MagicMock:
+    llm = MagicMock()
+    llm.invoke.return_value = MagicMock(content=f'{{"verdict": "{verdict}"}}')
+    return llm
+
+
 class TestClassifyBias:
-    def test_neutral_verdict(self, mocker):
+    def test_confident_d3_neutral_skips_llm(self, mocker):
         mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response("neutral", 0.9))
-        result = _classify_bias("核電", "支持", "反對", "標題", "文章內文")
+        llm = _llm("side_a")
+        result = _classify_bias(llm, "核電", "支持", "反對", "標題", "文章內文")
         assert result == {"verdict": "neutral", "reasoning": "未見明顯偏袒", "confidence": 0.9}
+        llm.invoke.assert_not_called()
 
-    def test_side_a_verdict(self, mocker):
-        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response("side_a", 0.7))
-        result = _classify_bias("核電", "支持", "反對", "標題", "文章內文")
-        assert result == {"verdict": "side_a", "reasoning": "明顯偏向「支持」", "confidence": 0.7}
+    def test_confident_d3_side_b(self, mocker):
+        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response("side_b", 0.85))
+        result = _classify_bias(_llm("neutral"), "核電", "支持", "反對", "標題", "文章內文")
+        assert result == {"verdict": "side_b", "reasoning": "明顯偏向「反對」", "confidence": 0.85}
 
-    def test_side_b_verdict(self, mocker):
-        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response("side_b", 0.6))
-        result = _classify_bias("核電", "支持", "反對", "標題", "文章內文")
-        assert result == {"verdict": "side_b", "reasoning": "明顯偏向「反對」", "confidence": 0.6}
+    def test_unsure_d3_defers_to_llm(self, mocker):
+        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response("neutral", 0.6))
+        result = _classify_bias(_llm("side_a"), "核電", "支持", "反對", "標題", "文章內文")
+        assert result == {"verdict": "side_a", "reasoning": "明顯偏向「支持」（LLM 複判）", "confidence": None}
+
+    def test_invalid_llm_verdict_raises(self, mocker):
+        mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response("neutral", 0.6))
+        with pytest.raises(ValueError):
+            _classify_bias(_llm("中立"), "核電", "支持", "反對", "標題", "文章內文")
 
     def test_request_payload(self, mocker):
-        post = mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response("neutral"))
-        _classify_bias("核電", "支持", "反對", "標題", "X" * 5000)
+        post = mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response("neutral", 0.9))
+        _classify_bias(_llm("neutral"), "核電", "支持", "反對", "標題", "政" * 5000)
         url, body = post.call_args[0][0], post.call_args[1]["json"]
         assert url.endswith("/v1/systemone")
         assert set(body["questions"]["stance"]["criteria"]) == {"neutral", "side_a", "side_b"}
         assert "支持" in body["questions"]["stance"]["criteria"]["side_a"]
-        assert "X" * 3000 in body["state"] and "X" * 3001 not in body["state"]
+        assert "政" * 3000 in body["state"] and "政" * 3001 not in body["state"]
+
+    def test_strips_markdown_nav_before_sending(self, mocker):
+        post = mocker.patch("scripts.analyze_bias.requests.post", return_value=_d3_response("neutral", 0.9))
+        body = "立法院今天針對松山機場遷建進行專案報告，雙方陣營各自表述立場並且互相攻防。"
+        md = f"[首頁](https://x.com/)\n![圖](https://x.com/a.jpg)\n*   [分享至臉書](javascript:;)\n{body}"
+        _classify_bias(_llm("neutral"), "核電", "支持", "反對", "標題", md)
+        state = post.call_args[1]["json"]["state"]
+        assert body in state and "https://" not in state and "首頁" not in state
 
     def test_http_error_propagates(self, mocker):
         resp = MagicMock()
         resp.raise_for_status.side_effect = requests.HTTPError("422")
         mocker.patch("scripts.analyze_bias.requests.post", return_value=resp)
         with pytest.raises(requests.HTTPError):
-            _classify_bias("核電", "支持", "反對", "標題", "文章內文")
+            _classify_bias(_llm("neutral"), "核電", "支持", "反對", "標題", "文章內文")
 
 
 # ---------------------------------------------------------------------------
