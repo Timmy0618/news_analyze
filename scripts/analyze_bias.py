@@ -4,7 +4,7 @@
 流程：
 1. 呼叫 Supabase graph Edge Function 取得文章分群
 2. 每個 cluster：LLM 判斷主題 + 兩個對立立場
-3. 每篇文章：Firecrawl 抓全文 → d3-mini 判斷立場（中立/偏A方/偏B方），d3 沒把握時 LLM 複判
+3. 每篇文章：Firecrawl 抓全文 → LLM 判斷立場（中立/偏A方/偏B方）
 4. 結果寫入 topic_clusters + article_bias
 """
 
@@ -36,7 +36,6 @@ logger = get_logger("analyze_bias")
 
 SUPABASE_URL = os.getenv("VITE_SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("VITE_SUPABASE_ANON_KEY", "")
-D3_URL = os.getenv("D3_URL", "http://localhost:8005")  # d3-mini 決策模型（System One API）
 
 
 def _fetch_clusters(
@@ -102,8 +101,6 @@ def _determine_topic_sides(llm, titles: list[str]) -> dict:
     return _extract_json(resp.content.strip())
 
 
-D3_CONFIDENT = 0.8  # d3 最高機率 >= 此值才直接採用，否則交給本地 LLM 複判
-
 _LLM_STANCE_PROMPT = """你是新聞媒體識讀分析員。判斷這篇報導在「{topic}」上的立場。
 立場A：{side_a}
 立場B：{side_b}
@@ -144,43 +141,17 @@ def _llm_stance(llm, topic: str, side_a: str, side_b: str, title: str, body: str
 
 
 def _classify_bias(llm, topic: str, side_a: str, side_b: str, title: str, content: str) -> dict:
-    """立場判斷：d3-mini 一題三選一（中立 / 偏A / 偏B），d3 沒把握時交給本地 LLM 複判。
+    """立場判斷：本地 LLM 三選一（中立 / 偏A / 偏B）。
 
-    同批 60 篇與舊 LLM 判決一致率：三選一 86.7% vs 拆兩題（是否偏頗 + 偏哪方）76.7%。
-    只送前 3000 字：整篇送一致率沒提升（73% vs 77%），每篇卻慢 15 倍。
-
-    d3 很愛判中立：標題一看就偏的文章常拿到中立 0.5~0.7。改成「中立 < 0.8 就判偏機率高的一方」
-    又把一堆中央社事實報導推成偏頗。31 篇人工標註（中立 14 / 偏頗 17）：
-    d3 取最高 21/31（偏頗只對 8）、中立門檻 0.8 20/31（中立只對 4）、
-    全交 LLM 25/31、d3 >= 0.8 才採用其餘交 LLM 26/31（中立 11、偏頗 15）。
-    ponytail: 門檻與 prompt 只用這 31 篇驗過；約 3/4 文章會走 LLM，篇數變多若太慢再調門檻。
+    31 篇人工標註（中立 14 / 偏頗 17）：全交 LLM 25/31，d3 取最高只有 21/31。
     """
-    body = _strip_markdown(content)
-    resp = requests.post(f"{D3_URL}/v1/systemone", json={
-        "state": json.dumps({"主題": topic, "標題": title, "新聞內容": body[:3000]}, ensure_ascii=False),
-        "questions": {"stance": {
-            "type": "choice",
-            "instructions": "這篇報導對該主題的立場是？",
-            # 選項說明會影響準度：只寫名稱時一致率掉到 80%
-            "criteria": {
-                "neutral": "平衡呈現雙方說法，或純事實陳述",
-                "side_a": f"明顯偏袒「{side_a}」",
-                "side_b": f"明顯偏袒「{side_b}」",
-            },
-        }},
-    }, timeout=60)
-    resp.raise_for_status()
-    probs = resp.json()["answers"]["stance"]["probabilities"]
-    verdict = max(probs, key=probs.get)
-    by_llm = probs[verdict] < D3_CONFIDENT
-    if by_llm:
-        verdict = _llm_stance(llm, topic, side_a, side_b, title, body)
+    verdict = _llm_stance(llm, topic, side_a, side_b, title, _strip_markdown(content))
     reasoning = {
         "neutral": "未見明顯偏袒",
         "side_a": f"明顯偏向「{side_a}」",
         "side_b": f"明顯偏向「{side_b}」",
-    }[verdict] + ("（LLM 複判）" if by_llm else "")
-    return {"verdict": verdict, "reasoning": reasoning, "confidence": None if by_llm else probs[verdict]}
+    }[verdict]
+    return {"verdict": verdict, "reasoning": reasoning, "confidence": None}
 
 
 def _existing_cluster_article_ids(db, run_date) -> list[set[int]]:
@@ -277,7 +248,7 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
             db.add(tc)
             db.flush()
 
-            # 非爭議主題：全部標記 neutral，不抓全文、不呼叫 d3 分類
+            # 非爭議主題：全部標記 neutral，不抓全文、不呼叫 LLM 分類
             if not is_controversial:
                 logger.info(f"Cluster '{topic}'（資訊型，{len(valid_articles)} 篇）→ 全部中立")
                 neutral_count = 0
