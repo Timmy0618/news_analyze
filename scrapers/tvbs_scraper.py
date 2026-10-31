@@ -10,8 +10,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import re
+from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 from news_scraper import NewsScraperConfig, NewsScraper
+
+TAIPEI = ZoneInfo("Asia/Taipei")
 
 
 class TvbsScraper(NewsScraper):
@@ -27,81 +31,42 @@ class TvbsScraper(NewsScraper):
         """返回爬蟲配置"""
         return NewsScraperConfig(
             base_url="https://news.tvbs.com.tw/politics",
-            article_tags=["article"],
+            article_tags=["div.article-editor-content"],
         )
     
     def extract_news_block(self, content: str) -> Optional[str]:
-        """
-        覆寫父類方法，專門提取 TVBS 新聞的新聞列表區塊
-        
-        Args:
-            content: 完整頁面 HTML
-            
-        Returns:
-            新聞列表區塊的 HTML
-        """
-        # TVBS 即時新聞：<div class="news_now2">
-        newslist_match = re.search(
-            r'<div\s+class="news_now2"[^>]*>(.*?)</div>\s*<!--即時新聞ed-->',
-            content, 
-            re.DOTALL | re.IGNORECASE
-        )
-        if newslist_match:
-            print(f"  ✓ 成功擷取 news_now2 div (TVBS)，內容長度: {len(newslist_match.group(1))} 字元")
-            return newslist_match.group(1)
-        
-        # 備用：只找 news_now2 開始到下一個大區塊
-        newslist_match = re.search(
-            r'<div\s+class="news_now2"[^>]*>(.*?)<!--',
-            content,
-            re.DOTALL | re.IGNORECASE
-        )
-        if newslist_match:
-            print(f"  ✓ 擷取 news_now2 (備用方式)，內容長度: {len(newslist_match.group(1))} 字元")
-            return newslist_match.group(1)
-        
-        # 最後備用：從第一個 /politics/ 連結開始
-        first_news_match = re.search(
-            r'<a[^>]*href="https://news\.tvbs\.com\.tw/politics/',
-            content,
-            re.IGNORECASE
-        )
-        if first_news_match:
-            start_pos = max(0, first_news_match.start() - 200)
-            result = content[start_pos:start_pos + 50000]
-            print("  ⚠ 未找到 news_now2，從第一個新聞連結開始提取")
-            return result
-        
-        print("  ✗ 無法找到 TVBS 新聞的新聞區塊")
-        return None
-    
+        """2026 改版後沒有 news_now2 列表區塊了，整頁交給 parse_news_items 挑文章連結。"""
+        return content
+
     def _news_url_pattern(self) -> str:
         return "/politics/"
 
     def parse_news_items(self, soup, target_date: str):
-        parts = target_date.split('/')
-        date_short = f"{parts[1]}/{parts[2]}"
+        """新版列表頁沒有日期：全部政治新聞連結都收，日期改在 build_article_record 讀文章頁。
+
+        已經在 DB 的會被 filter_existing_links 濾掉，所以不會重複抓。
+        """
         items = []
         seen = set()
-        for li in soup.find_all('li'):
-            a = li.find('a', href=lambda h: h and '/politics/' in h)
-            if not a:
+        for a in soup.find_all('a', href=re.compile(r'/politics/\d+$')):
+            href = self.build_full_link(str(a['href']))
+            img = a.find('img', alt=True)
+            heading = a.find(['h2', 'h3'])
+            title = (img['alt'].strip() if img else '') or (heading.get_text(strip=True) if heading else '')
+            if len(title) < 3 or href in seen:
                 continue
-            h2 = a.find('h2', class_='txt')
-            title = h2.get_text(strip=True) if h2 else ''
-            if not title:
-                img = a.find('img', alt=True)
-                title = img.get('alt', '') if img else ''
-            if not title or len(title) < 3:
-                continue
-            time_div = a.find('div', class_='time')
-            if not time_div or date_short not in time_div.get_text():
-                continue
-            href = str(a.get('href', ''))
-            if href and href not in seen:
-                seen.add(href)
-                items.append((title, href))
+            seen.add(href)
+            items.append((title, href))
         return items
+
+    def build_article_record(self, title, link, article_content, date_str):
+        record = super().build_article_record(title, link, article_content, date_str)
+        # ponytail: 為了日期多抓一次文章頁（每篇第 3 個 request）；TVBS 一天約 30 篇，量大再跟署名共用一次回應
+        m = re.search(r'"datePublished"\s*:\s*"([^"]+)"', self.scrape_list_page(link))
+        if m:
+            published = datetime.fromisoformat(m.group(1).replace('Z', '+00:00'))
+            record['日期'] = published.astimezone(TAIPEI).strftime('%Y/%m/%d')
+        return record
 
     def build_full_link(self, link: str) -> str:
         """
