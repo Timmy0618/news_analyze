@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
-from utils.article_content import summarize_article
+from utils.article_content import fetch_article_content, summarize_article
 from news_scraper.byline import NO_BYLINE, extract_byline, extract_byline_from_html
 
 
@@ -89,78 +89,21 @@ class NewsScraperConfig:
 class NewsScraper:
     """通用新聞爬蟲類"""
 
-    def __init__(
-        self,
-        config: NewsScraperConfig,
-        firecrawl_url: Optional[str] = None,
-        debug: bool = False,
-    ):
+    def __init__(self, config: NewsScraperConfig, debug: bool = False):
         """
         初始化爬蟲
 
         Args:
             config: 網站配置
-            firecrawl_url: Firecrawl API 的 URL；None 時改讀環境變數 FIRECRAWL_URL，
-                再退回預設值 http://localhost:3002
             debug: 是否啟用調試模式 (儲存中間檔案)
         """
         load_dotenv()
         self.config = config
-        self.firecrawl_url = firecrawl_url or os.getenv("FIRECRAWL_URL", "http://localhost:3002")
         self.debug = debug
 
     def scrape_page(self, url: str, tags: List[str]) -> str:
-        """
-        抓取單一頁面
-
-        Args:
-            url: 要抓取的 URL
-            tags: 要抓取的 HTML 標籤列表
-
-        Returns:
-            頁面的 Markdown 內容
-        """
-        try:
-            scrape_config = {
-                "url": url,
-                "formats": ["markdown"],
-                "includeTags": tags,
-                "onlyMainContent": False
-            }
-
-            response = requests.post(
-                f"{self.firecrawl_url}/v2/scrape",
-                json=scrape_config,
-                headers={"Content-Type": "application/json"}
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            if "data" in data and "markdown" in data["data"]:
-                content = data["data"]["markdown"]
-                if content and content.strip():
-                    return content
-
-            # Fallback: if includeTags returned nothing, retry with onlyMainContent
-            if tags:
-                fallback_config = {
-                    "url": url,
-                    "formats": ["markdown"],
-                    "onlyMainContent": True
-                }
-                fallback_resp = requests.post(
-                    f"{self.firecrawl_url}/v2/scrape",
-                    json=fallback_config,
-                    headers={"Content-Type": "application/json"}
-                )
-                fallback_resp.raise_for_status()
-                fallback_data = fallback_resp.json()
-                if "data" in fallback_data and "markdown" in fallback_data["data"]:
-                    return fallback_data["data"]["markdown"]
-            return ""
-        except Exception as e:
-            print(f"  抓取錯誤: {e}")
-            return ""
+        """抓文章正文（純 requests + utils.article_content.SITE_TAGS 選擇器）；抓不到回空字串。"""
+        return fetch_article_content(url) or ""
 
     def get_page_url(self, page: int) -> str:
         """
@@ -180,7 +123,7 @@ class NewsScraper:
 
     def scrape_list_page(self, url: str) -> str:
         """
-        直接用 requests 抓取列表頁面（不使用 Firecrawl）
+        直接用 requests 抓取頁面 HTML
 
         Args:
             url: 要抓取的 URL
@@ -197,6 +140,9 @@ class NewsScraper:
 
             response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
+            # Content-Type 沒帶 charset 時 requests 會當 ISO-8859-1，中文變亂碼（TVBS 就是）
+            if "charset" not in response.headers.get("Content-Type", "").lower():
+                response.encoding = response.apparent_encoding
             return response.text
         except Exception as e:
             print(f"  抓取錯誤: {e}")
@@ -366,8 +312,8 @@ class NewsScraper:
         return links
 
     def fetch_byline(self, url: str) -> str:
-        """Firecrawl markdown 沒有署名時，直接抓原始 HTML 補（三立/中時的記者名只在 JSON-LD）。"""
-        html = self.scrape_list_page(url)   # 純 requests，不經 Firecrawl
+        """讀原始 HTML 的署名（JSON-LD author 優先；三立/中時/TVBS 的記者名都在這）。"""
+        html = self.scrape_list_page(url)
         return extract_byline_from_html(html) if html else NO_BYLINE
 
     def build_article_record(
@@ -378,9 +324,11 @@ class NewsScraper:
         date_str: str,
     ) -> Dict:
         """由已抓取的文章全文組出文章記錄;大綱由本地 LLM 摘要(無全文則留空)。"""
-        reporter = extract_byline(article_content)
-        if reporter == NO_BYLINE:
-            reporter = self.fetch_byline(link)
+        # ponytail: 正文跟署名各抓一次 HTML（每篇 2 個 request）；量大再改成共用一次回應
+        # HTML 優先：純文字正文會把「為避免拍…」這種句子誤認成署名
+        reporter = self.fetch_byline(link)
+        if reporter == NO_BYLINE and article_content:
+            reporter = extract_byline(article_content)
         summary = summarize_article(article_content) if article_content else ""
         return {
             "標題": title,
@@ -434,7 +382,7 @@ class NewsScraper:
             page_url = self.get_page_url(page)
             print(f"\n正在抓取第 {page} 頁: {page_url}")
 
-            # 直接用 requests 抓取列表頁（不用 Firecrawl）
+            # 直接用 requests 抓取列表頁
             raw_content = self.scrape_list_page(page_url)
             print(f"  抓取到內容長度: {len(raw_content)} 字元")
 

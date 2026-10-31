@@ -4,7 +4,6 @@
 用法: uv run python scripts/fix_missing_reporters.py [--limit N] [--dry-run] [--site SITE]
 """
 import argparse
-import os
 import sys
 import time
 from pathlib import Path
@@ -22,8 +21,6 @@ from scrapers.ltn_scraper import LtnScraper
 from scrapers.setn_scraper import SetnScraper
 from scrapers.tvbs_scraper import TvbsScraper
 
-FIRECRAWL_URL = os.getenv("FIRECRAWL_URL", "http://localhost:3002")
-
 SCRAPER_MAP = {
     "自由時報": LtnScraper,
     "中央通訊社": CnaScraper,
@@ -36,8 +33,8 @@ SCRAPER_MAP = {
 def get_scraper(source_site: str) -> NewsScraper:
     cls = SCRAPER_MAP.get(source_site)
     if cls:
-        return cls(cls.get_config(), firecrawl_url=FIRECRAWL_URL)
-    return NewsScraper(NewsScraperConfig("http://dummy", []), firecrawl_url=FIRECRAWL_URL)
+        return cls(cls.get_config())
+    return NewsScraper(NewsScraperConfig("http://dummy", []))
 
 
 def main():
@@ -73,13 +70,13 @@ def main():
         try:
             content = scraper.scrape_page(article.source_url, scraper.config.article_tags)
         except Exception as e:
-            print(f"  ✗ Firecrawl 抓取失敗: {e}")
+            print(f"  ✗ 抓取失敗: {e}")
             content = ""
 
-        # Firecrawl 沒有內容（或內容裡沒署名）時，直接讀原始 HTML 的 JSON-LD 補
-        reporter = extract_byline(content) if content.strip() else NO_BYLINE
-        if reporter == NO_BYLINE:
-            reporter = scraper.fetch_byline(article.source_url)
+        # 跟爬蟲同順序：原始 HTML（JSON-LD）優先，抓不到才看正文
+        reporter = scraper.fetch_byline(article.source_url)
+        if reporter == NO_BYLINE and content.strip():
+            reporter = extract_byline(content)
         print(f"  {article.reporter!r} → 記者: {reporter}")
 
         if reporter == NO_BYLINE and article.reporter == NO_BYLINE:

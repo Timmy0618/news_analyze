@@ -53,10 +53,10 @@ scrapers/*.py      jina_client.py     api_server.py
 - `extract_news_block(content)` — extracts the news list section from raw HTML (site-specific regex)
 
 The scraping flow for each site:
-1. Fetch list pages with `requests` (no Firecrawl for list pages)
+1. Fetch list pages with `requests`
 2. Call `extract_news_block()` → clean HTML → send to local LLM to extract `[{title, link}]` JSON
 3. Filter out URLs already in the DB (`filter_existing_links`)
-4. For each new link: fetch article via Firecrawl (`/v2/scrape`) → extract reporter via regex → generate Traditional Chinese summary via local LLM from the full text and save to `大綱`
+4. For each new link: fetch article HTML with `requests` and pull the body via per-site CSS selectors (`utils/article_content.py` `SITE_TAGS`) → extract reporter (JSON-LD first, then regex on the body) → generate Traditional Chinese summary via local LLM from the full text and save to `大綱`
 5. Save results as JSON to `results/` and optionally insert to DB
 
 The LLM (`utils/llm.py`) is a `ChatOpenAI` instance pointing to a local OpenAI-compatible server. It handles malformed JSON by calling itself again to fix it (`fix_json_response`).
@@ -95,12 +95,9 @@ LLM_URL=http://localhost:8000/v1
 LLM_MODEL=qwen3.6-35b
 OPENAPI_KEY=EMPTY  # can be any non-empty string for local servers
 
-# Firecrawl (self-hosted)
-FIRECRAWL_URL=http://172.17.0.1:3002  # Firecrawl binds to the docker bridge gateway, not localhost (containers use http://host-gateway:3002 via the compose override)
-# NewsScraper reads FIRECRAWL_URL, falling back to http://localhost:3002
 ```
 
-Firecrawl and a local LLM server must be running for scraping to work; the embedding server on `EMBED_URL` must be up for the embed phase. See `docker-compose.yml` for Firecrawl setup.
+A local LLM server must be running for scraping to work; the embedding server on `EMBED_URL` must be up for the embed phase. Article bodies are fetched with plain `requests` (all sites are server-rendered); a new site needs its body selector added to `SITE_TAGS` in `utils/article_content.py`.
 
 ## Adding a New Scraper
 

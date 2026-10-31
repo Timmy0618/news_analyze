@@ -20,7 +20,7 @@
 [Scrape phase]       →  [Embed phase]       →  [Search API]
 scrapers/*.py            scripts/generate        api_server.py
 BeautifulSoup+regex      _embeddings.py              ↑
-Firecrawl (文章)         Jina AI API           React Frontend
+requests (文章)          Jina AI API           React Frontend
       ↓                       ↓
   news_articles         title_embedding
   (PostgreSQL)          summary_embedding
@@ -33,11 +33,10 @@ Firecrawl (文章)         Jina AI API           React Frontend
 # 安裝依賴
 uv sync
 
-# 啟動 Firecrawl + API server
+# 啟動 API server
 make start
 
 # 或分步驟
-make firecrawl   # 啟動 Firecrawl (port 3002)
 make migrate     # 執行資料庫 migration
 make api         # 啟動 API server (port 8001)
 ```
@@ -46,20 +45,17 @@ make api         # 啟動 API server (port 8001)
 
 | 指令 | 說明 |
 |------|------|
-| `make start` | 啟動 Firecrawl + API server |
-| `make firecrawl` | 僅啟動 Firecrawl (port 3002) |
+| `make start` | 啟動 API server |
 | `make db` | 啟動本地 postgres + pgadmin（開發用） |
 | `make stop` | 停止所有 docker 服務 |
 | `make api` | 啟動 API server |
 | `make scrape` | 手動執行爬蟲（`PAGES=3 MAX=50 DATE=2026-05-12`） |
 | `make embed` | 生成嵌入向量 |
 | `make migrate` | 執行 alembic upgrade head |
-| `make logs` | 查看 Firecrawl logs |
 
 ## 環境需求
 
 - Python 3.14+
-- [Firecrawl](https://github.com/mendableai/firecrawl) 自架（`docker compose -f firecrawl/docker-compose.yml up -d`）
 - PostgreSQL + pgvector（推薦使用 Supabase）
 
 ## 環境變數設定
@@ -75,7 +71,7 @@ DATABASE_URL=postgresql://postgres:<password>@db.<project-id>.supabase.co:5432/p
 # Jina AI
 JINA_API_KEY=your_jina_api_key
 
-# OpenAI-compatible API key（Firecrawl 用，可填任意值）
+# OpenAI-compatible API key（本地 LLM 用，可填任意值）
 OPENAPI_KEY=EMPTY
 
 # 排程設定
@@ -121,7 +117,7 @@ uv run python scripts/run_all_scrapers.py --pages 3 --max-articles 50 --date 202
 ## 診斷工具
 
 ```bash
-# 驗證三個爬蟲的 HTML 解析是否正確（需 Firecrawl 運行中）
+# 驗證三個爬蟲的 HTML 解析是否正確
 uv run python scripts/diagnose_scrapers.py
 ```
 
@@ -158,7 +154,6 @@ curl "http://localhost:8001/api/stats"
 │   ├── jina_client.py         # Jina AI embedding
 │   ├── llm.py                 # LLM client（用於其他功能）
 │   └── scheduler/             # APScheduler 任務
-├── firecrawl/                 # Firecrawl docker-compose
 └── logs/                      # 日誌檔案
 ```
 

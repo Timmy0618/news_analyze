@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import os
-
 import requests
+from bs4 import BeautifulSoup
 from langchain_core.messages import HumanMessage
 
 from utils.llm import create_llm
@@ -12,9 +11,11 @@ from utils.logger import get_logger
 
 logger = get_logger("article_content")
 
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+
 SITE_TAGS: dict[str, list[str]] = {
     "ltn.com.tw":     ["div.text"],  # 內文在 div.text，article 標籤在 LTN 抓不到東西
-    "tvbs.com.tw":    ["article"],
+    "tvbs.com.tw":    ["div.article-editor-content"],  # 2026/10 改版後沒有 <article> 了
     "setn.com":       ["article"],
     "cna.com.tw":     ["article"],
     "chinatimes.com": ["article", "main"],
@@ -40,39 +41,26 @@ def is_valid_content(content: str) -> bool:
     return len(long_lines) >= 2
 
 
-def fetch_article_content(url: str, firecrawl_url: str | None = None) -> str | None:
-    firecrawl_url = firecrawl_url or os.getenv("FIRECRAWL_URL", "http://localhost:3002")
-
-    def _call(include_tags: list[str], only_main: bool) -> str | None:
-        try:
-            payload: dict = {"url": url, "formats": ["markdown"], "onlyMainContent": only_main}
-            if include_tags:
-                payload["includeTags"] = include_tags
-            resp = requests.post(
-                f"{firecrawl_url}/v2/scrape",
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            content = resp.json().get("data", {}).get("markdown", "")
-            return content.strip() if content else None
-        except Exception as e:
-            logger.warning(f"Firecrawl failed for {url}: {e}")
-            return None
-
-    tags = _tags_for_url(url)
-    if tags:
-        # ponytail: 已知站台不做 onlyMainContent fallback。LTN 的 fallback 只會回導覽列+廣告，
-        # 而那堆連結騙得過 is_valid_content，最後餵垃圾給 LLM。抓不到就當抓取失敗（會被 skip）。
-        content = _call(include_tags=tags, only_main=False)
-        if content and is_valid_content(content):
-            return content
-        logger.warning(f"  選擇器 {tags} 抓不到正文（版型可能變了）: {url}")
+def fetch_article_content(url: str) -> str | None:
+    """直接抓 HTML，取正文區塊裡的 <p> 一段一行。這幾個站都是伺服器端渲染，不需要瀏覽器。"""
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=30)
+        resp.raise_for_status()
+    except Exception as e:
+        logger.warning(f"抓取失敗 {url}: {e}")
         return None
 
-    content = _call(include_tags=[], only_main=True)
-    return content if content and is_valid_content(content) else None
+    soup = BeautifulSoup(resp.content, "html.parser")  # 給 bytes，讓 bs4 從 <meta charset> 判斷編碼
+    # ponytail: 沒登記的站就猜 article/main，猜錯就當抓取失敗；新站要穩請加進 SITE_TAGS
+    for tag in _tags_for_url(url) or ["article", "main"]:
+        el = soup.select_one(tag)
+        if not el:
+            continue
+        content = "\n".join(t for p in el.find_all("p") if (t := p.get_text(" ", strip=True)))
+        if is_valid_content(content):
+            return content
+    logger.warning(f"  抓不到正文（版型可能變了）: {url}")
+    return None
 
 
 def summarize_article(content: str, llm=None) -> str:

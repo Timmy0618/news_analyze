@@ -43,12 +43,10 @@ guide, see `CLAUDE.md`.
         │ scrapers/*.py            │ utils/jina_client.py     │ utils/llm.py
         ▼                          ▼                          ▼
    list pages (requests)      Jina embeddings API        local LLM (vLLM, :8000)
-   + Firecrawl (172.17.0.1:3002) (jina-embeddings-v3)     qwen3.6-35b
+   + article pages (requests)    (jina-embeddings-v3)     qwen3.6-35b
 ```
 
-External services: **Firecrawl** (self-hosted, reachable only via the docker
-bridge gateway at `http://172.17.0.1:3002`, honors `FIRECRAWL_URL`; falls back to
-`localhost:3002`, scrapes article bodies), **Jina AI** (`jina-embeddings-v3`,
+External services: **Jina AI** (`jina-embeddings-v3`,
 1024-dim vectors), **vLLM** (local OpenAI-compatible LLM for
 extraction/classification), **SearXNG** (`:8081`).
 
@@ -115,11 +113,11 @@ History: `git log` commit `ca88802` and `562fc2a` are the egress-reduction passe
 
 | Job | Schedule (env) | What it does | Egress surface |
 |-----|----------------|--------------|----------------|
-| `run_scrapers` | `SCRAPE_SCHEDULE` (cron hours) or `SCRAPE_INTERVAL_MINUTES`; `SCRAPE_NO_DB` to skip DB | scrape list pages → LLM extracts `[{title,link}]` → filter existing → Firecrawl article fetch → LLM extracts reporter → insert | #1 (reads `source_url` only for dedup) |
+| `run_scrapers` | `SCRAPE_SCHEDULE` (cron hours) or `SCRAPE_INTERVAL_MINUTES`; `SCRAPE_NO_DB` to skip DB | scrape list pages → LLM extracts `[{title,link}]` → filter existing → article fetch (`requests` + `SITE_TAGS` selector) → LLM extracts reporter → insert | #1 (reads `source_url` only for dedup) |
 | `run_embeddings` | `EMBED_INTERVAL_MINUTES` (default 60); `EMBED_BATCH_SIZE` (10), `EMBED_LIMIT`, `EMBED_FORCE` | finds rows missing a vector, calls Jina, writes back via `UPDATE ... WHERE id`. Selects only `id/title/summary` + NULL flags — **never reads existing vectors** | #1 |
 | `run_obsidian_export` | daily at `OBSIDIAN_EXPORT_HOUR` (default 3), only if `OBSIDIAN_VAULT_PATH` set | exports **today's** articles to an Obsidian vault, builds a related-article map from `title_embedding` | #1 (reads `title_embedding`) |
 | `run_clean_reporters` | daily at `CLEAN_REPORTERS_HOUR` (default 2) | 用本地 LLM 清 `reporter` 欄位的髒值（只對相異字串跑）；排在 bias analysis 之前，讓當天統計吃到乾淨的名字 | #1（只讀 `reporter` 的相異值） |
-| `run_bias_analysis` | daily at `BIAS_ANALYSIS_HOUR` (default 4); `days_back=3`, `k=10`, `min_similarity=0.65` | clusters recent articles, classifies stance per article, writes `topic_clusters` + `article_bias` | calls the **graph Edge Function** for clustering; fetches article bodies via Firecrawl |
+| `run_bias_analysis` | daily at `BIAS_ANALYSIS_HOUR` (default 4); `days_back=3`, `k=10`, `min_similarity=0.65` | clusters recent articles, classifies stance per article, writes `topic_clusters` + `article_bias` | calls the **graph Edge Function** for clustering; fetches article bodies via `utils.article_content` |
 
 ### 4c. Scrapers (`news_scraper/`, `scrapers/`)
 Base `NewsScraper` in `news_scraper/scraper.py`; each site subclass implements
@@ -129,7 +127,7 @@ new ones in `scripts/run_all_scrapers.py`. (Full guide in `CLAUDE.md`.)
 ### 4d. Standalone scripts (`scripts/`, repo root)
 - `scripts/generate_embeddings.py` — embedding backfill (also the scheduled job).
 - `scripts/analyze_bias.py` — bias pipeline (also scheduled). `_fetch_clusters()`
-  calls the `graph` Edge Function; `_fetch_article_content()` uses Firecrawl.
+  calls the `graph` Edge Function; `utils.article_content.fetch_article_content()` fetches the HTML with plain `requests` + per-site CSS selector (no Firecrawl).
 - `scripts/export_to_obsidian.py` — Obsidian export (also scheduled).
 - `scripts/fix_missing_reporters.py` — re-scrape articles whose reporter is `未提及`.
 - `scripts/clean_reporters.py` — 用本地 LLM 清理 `reporter` 欄位裡抓壞的舊值
@@ -192,7 +190,7 @@ embeds the query and calls `match_articles` (cosine `<=>`) → ranked results.
 
 **Bias pipeline (daily)**
 `run_bias_analysis` → `graph` Edge Function clusters recent articles by
-`title_embedding` → for each controversial cluster, fetch article bodies (Firecrawl)
+`title_embedding` → for each controversial cluster, fetch article bodies (`requests`)
 and classify stance (LLM) → write `topic_clusters` + `article_bias` → `BiasPage`
 reads them via the `bias` Edge Function + `get_bias_stats`.
 
@@ -211,8 +209,7 @@ topic nodes + similarity edges.
 | `searxng` | `searxng/searxng` | `:8081` | meta-search |
 | `vllm` | `vllm/vllm-openai` | `:8000` | local LLM (qwen3.6-35b), GPU |
 
-Firecrawl runs separately (`firecrawl/`, reachable only at the docker bridge
-gateway `http://172.17.0.1:3002`; falls back to `localhost:3002`). To ship code
+To ship code
 changes: `docker compose up -d --build api frontend` (leave `vllm`/`searxng` running).
 The `api` container runs the startup scheduler jobs immediately on boot, so
 `/health` may lag a few seconds while the first embed batch runs.

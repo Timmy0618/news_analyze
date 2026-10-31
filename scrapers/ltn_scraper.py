@@ -87,7 +87,7 @@ class LtnScraper(NewsScraper):
         return items
 
     def scrape_page(self, url: str, tags: List[str]) -> str:
-        """Override to bypass Firecrawl: LTN has no <article> tag; uses requests instead."""
+        """LTN 正文在 itemprop=articleBody，並把 article_edit（署名列）接在前面。"""
         html = self.scrape_list_page(url)  # scrape_list_page is a generic HTTP getter here
         if not html:
             return ""

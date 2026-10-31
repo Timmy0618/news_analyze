@@ -6,7 +6,6 @@
 import sys
 import os
 import json
-import requests
 from pathlib import Path
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
@@ -19,8 +18,6 @@ from scrapers.chinatimes_scraper import ChinaTimesScraper
 from news_scraper.byline import extract_byline
 from news_scraper.scraper import NewsScraper
 
-FIRECRAWL_URL = os.getenv("FIRECRAWL_URL", "http://localhost:3002")
-
 TODAY = datetime.now().strftime("%Y/%m/%d")
 YESTERDAY = (datetime.now() - timedelta(days=1)).strftime("%Y/%m/%d")
 
@@ -29,37 +26,6 @@ SCRAPERS = [
     ("三立", SetnScraper(SetnScraper.get_config())),
     ("中時", ChinaTimesScraper(ChinaTimesScraper.get_config())),
 ]
-
-
-def fetch_article_via_firecrawl(url: str, tags: list) -> str:
-    """呼叫 Firecrawl API 取得文章 markdown 內容。"""
-    try:
-        resp = requests.post(
-            f"{FIRECRAWL_URL}/v2/scrape",
-            json={
-                "url": url,
-                "formats": ["markdown"],
-                "includeTags": tags,
-                "onlyMainContent": False,
-            },
-            headers={"Content-Type": "application/json"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if "data" in data and "markdown" in data["data"]:
-            return data["data"]["markdown"]
-        return ""
-    except Exception as e:
-        return f"[Firecrawl 錯誤: {e}]"
-
-
-def check_firecrawl() -> bool:
-    try:
-        r = requests.get(f"{FIRECRAWL_URL}/", timeout=5)
-        return r.status_code < 500
-    except Exception:
-        return False
 
 
 def diagnose_site(name: str, scraper: NewsScraper) -> dict:
@@ -134,11 +100,6 @@ def diagnose_site(name: str, scraper: NewsScraper) -> dict:
         print(f"[列表] {list_mark} 結果數量: {len(today_items)} 筆 ({'PASS' if result['list_pass'] else 'FAIL - 需修正'})")
 
     # --- 6. 文章 reporter 診斷 ---
-    firecrawl_ok = check_firecrawl()
-    if not firecrawl_ok:
-        print(f"\n[文章] ⚠ Firecrawl 未就緒，跳過文章診斷")
-        return result
-
     today_items = result["today_items"]
     if not today_items:
         # 嘗試用昨天或前天
@@ -154,12 +115,14 @@ def diagnose_site(name: str, scraper: NewsScraper) -> dict:
         test_link = scraper.build_full_link(today_items[0][1])
         print(f"\n[文章] 測試文章: {test_link}")
 
-    article_md = fetch_article_via_firecrawl(test_link, scraper.config.article_tags)
+    article_md = scraper.scrape_page(test_link, scraper.config.article_tags)
     print(f"[文章] 內容長度: {len(article_md)} 字元")
     if article_md:
         print(f"[文章] 內容前 300 字:\n{article_md[:300]}")
 
-    reporter = extract_byline(article_md)
+    reporter = scraper.fetch_byline(test_link)
+    if reporter == "未提及" and article_md:
+        reporter = extract_byline(article_md)
     result["reporter"] = reporter
     result["reporter_pass"] = reporter != "未提及" and len(reporter) > 1
 
@@ -173,11 +136,8 @@ def main():
     print("=" * 60)
     print("  爬蟲診斷腳本")
     print(f"  今天: {TODAY}  昨天: {YESTERDAY}")
-    print(f"  Firecrawl: {FIRECRAWL_URL}")
     print("=" * 60)
 
-    firecrawl_ok = check_firecrawl()
-    print(f"\nFirecrawl 狀態: {'✓ 就緒' if firecrawl_ok else '✗ 未就緒（文章診斷將跳過）'}")
 
     all_results = []
     for name, scraper in SCRAPERS:

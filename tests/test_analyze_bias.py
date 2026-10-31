@@ -6,7 +6,7 @@ Covers:
 - _tags_for_url: site domain → article tags lookup
 - _is_valid_content: content quality gate
 - _fetch_clusters: Supabase graph edge function call
-- _fetch_article_content: two-stage Firecrawl fetch (primary + fallback)
+- _fetch_article_content: requests + CSS selector article fetch
 - _determine_topic_sides: LLM topic/sides extraction
 - _classify_bias: LLM bias classification + verdict mapping
 - run_bias_analysis: full pipeline with mocked external calls
@@ -61,7 +61,7 @@ class TestTagsForUrl:
         assert _tags_for_url("https://news.ltn.com.tw/news/politics/123") == ["div.text"]
 
     def test_tvbs(self):
-        assert _tags_for_url("https://news.tvbs.com.tw/politics/123") == ["article"]
+        assert _tags_for_url("https://news.tvbs.com.tw/politics/123") == ["div.article-editor-content"]
 
     def test_setn(self):
         assert _tags_for_url("https://www.setn.com/News.aspx?NewsID=123") == ["article"]
@@ -151,66 +151,45 @@ class TestFetchClusters:
 # _fetch_article_content
 # ---------------------------------------------------------------------------
 
-class TestFetchArticleContent:
-    def test_returns_markdown(self, mocker):
-        mock_post = mocker.patch("scripts.analyze_bias.requests.post")
-        mock_post.return_value.json.return_value = {"data": {"markdown": VALID_ARTICLE}}
-        result = _fetch_article_content("http://example.com/article")
-        assert result == VALID_ARTICLE
+def _html(body: str) -> bytes:
+    return f"<html><body><nav><p>導覽</p></nav>{body}</body></html>".encode()
 
-    def test_returns_none_on_empty_content(self, mocker):
-        mock_post = mocker.patch("scripts.analyze_bias.requests.post")
-        mock_post.return_value.json.return_value = {"data": {"markdown": ""}}
-        result = _fetch_article_content("http://example.com/article")
-        assert result is None
+
+class TestFetchArticleContent:
+    def _get(self, mocker, html: bytes):
+        mock_get = mocker.patch("utils.article_content.requests.get")
+        mock_get.return_value.content = html
+        return mock_get
+
+    def test_extracts_paragraphs_from_site_selector(self, mocker):
+        paras = "".join(f"<p>{_PARA}</p>" for _ in range(3))
+        self._get(mocker, _html(f'<div class="text">{paras}</div>'))
+        assert _fetch_article_content("https://news.ltn.com.tw/news/123") == VALID_ARTICLE
+
+    def test_selector_miss_returns_none(self, mocker):
+        # 正文不在 div.text 裡（版型變了）就算失敗，不去撈導覽列
+        paras = "".join(f"<p>{_PARA}</p>" for _ in range(3))
+        self._get(mocker, _html(f"<section>{paras}</section>"))
+        assert _fetch_article_content("https://news.ltn.com.tw/news/123") is None
+
+    def test_unknown_site_tries_article(self, mocker):
+        paras = "".join(f"<p>{_PARA}</p>" for _ in range(3))
+        self._get(mocker, _html(f"<article>{paras}</article>"))
+        assert _fetch_article_content("https://unknown-site.com/news/1") == VALID_ARTICLE
+
+    def test_short_content_returns_none(self, mocker):
+        self._get(mocker, _html("<article><p>短</p></article>"))
+        assert _fetch_article_content("https://unknown-site.com/news/1") is None
 
     def test_returns_none_on_http_error(self, mocker):
         import requests as req
-        mock_post = mocker.patch("scripts.analyze_bias.requests.post")
-        mock_post.return_value.raise_for_status.side_effect = req.exceptions.HTTPError
-        result = _fetch_article_content("http://example.com/article")
-        assert result is None
+        self._get(mocker, b"").return_value.raise_for_status.side_effect = req.exceptions.HTTPError
+        assert _fetch_article_content("http://example.com/article") is None
 
     def test_returns_none_on_connection_error(self, mocker):
         import requests as req
-        mock_post = mocker.patch("scripts.analyze_bias.requests.post")
-        mock_post.side_effect = req.exceptions.ConnectionError
-        result = _fetch_article_content("http://example.com/article")
-        assert result is None
-
-    def test_known_site_uses_include_tags_first(self, mocker):
-        mock_post = mocker.patch("scripts.analyze_bias.requests.post")
-        mock_post.return_value.json.return_value = {"data": {"markdown": VALID_ARTICLE}}
-        result = _fetch_article_content("https://news.ltn.com.tw/news/123")
-        assert result == VALID_ARTICLE
-        first_call_payload = mock_post.call_args_list[0][1]["json"]
-        assert first_call_payload.get("includeTags") == ["div.text"]
-        assert first_call_payload.get("onlyMainContent") is False
-        assert mock_post.call_count == 1  # no fallback needed
-
-    def test_known_site_has_no_only_main_fallback(self, mocker):
-        # 已知站台選擇器抓不到就算失敗，不退回 onlyMainContent（那只會回導覽列）
-        mock_post = mocker.patch("scripts.analyze_bias.requests.post")
-        mock_post.return_value.json.return_value = {"data": {"markdown": "短導覽"}}
-        result = _fetch_article_content("https://news.ltn.com.tw/news/123")
-        assert result is None
-        assert mock_post.call_count == 1
-
-    def test_unknown_site_skips_to_only_main_content(self, mocker):
-        mock_post = mocker.patch("scripts.analyze_bias.requests.post")
-        mock_post.return_value.json.return_value = {"data": {"markdown": VALID_ARTICLE}}
-        _fetch_article_content("https://unknown-site.com/news/1")
-        assert mock_post.call_count == 1
-        payload = mock_post.call_args_list[0][1]["json"]
-        assert "includeTags" not in payload
-        assert payload.get("onlyMainContent") is True
-
-    def test_unknown_site_invalid_returns_none(self, mocker):
-        mock_post = mocker.patch("scripts.analyze_bias.requests.post")
-        mock_post.return_value.json.return_value = {"data": {"markdown": "短"}}
-        result = _fetch_article_content("https://unknown-site.com/news/1")
-        assert result is None
-        assert mock_post.call_count == 1
+        mocker.patch("utils.article_content.requests.get", side_effect=req.exceptions.ConnectionError)
+        assert _fetch_article_content("http://example.com/article") is None
 
 
 # ---------------------------------------------------------------------------
@@ -449,3 +428,4 @@ class TestRunBiasAnalysis:
         verdicts = [getattr(a, "verdict", None) for a in added]
         assert verdicts.count("neutral") == 2
         mock_db.commit.assert_called()
+

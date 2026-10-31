@@ -144,7 +144,7 @@ results/
 
 1. **執行時間**: 每個網站爬取時間約 1-5 分鐘，取決於頁數和文章數
 2. **資料庫連線**: 確保 PostgreSQL 資料庫已啟動
-3. **API 服務**: 確保 Firecrawl 和 LLM 服務已啟動
+3. **API 服務**: 確保本地 LLM 服務已啟動
 4. **錯誤處理**: 單一爬蟲失敗不會影響其他爬蟲的執行
 5. **結果儲存**: JSON 和資料庫會同時儲存（除非使用 --no-db）
 
@@ -162,14 +162,3 @@ results/
 docker-compose -f docker-compose-db.yml up -d
 ```
 
-### 問題：Firecrawl 服務無法連線
-
-**解決方式**:
-```bash
-# 檢查 Firecrawl 服務狀態
-curl http://localhost:3002/health
-
-# 重啟服務（如果需要）
-cd firecrawl
-docker-compose restart
-```

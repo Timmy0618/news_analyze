@@ -1,4 +1,4 @@
-"""一次性回填:為缺少 summary 的舊文章用 Firecrawl 抓全文 + 本地 LLM 產生摘要。
+"""一次性回填:為缺少 summary 的舊文章用 requests 抓全文 + 本地 LLM 產生摘要。
 
 可重複執行(每篇單獨 commit,天然斷點續傳)。summary embedding 由
 scripts/generate_embeddings.py 後續產生,本腳本不處理向量。

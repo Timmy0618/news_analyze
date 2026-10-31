@@ -45,10 +45,9 @@ result = scraper.scrape_news(
 ### 2. 自訂參數
 
 ```python
-# 自訂 LLM 和 Firecrawl 設定
+# 自訂 LLM 設定
 scraper = NewsScraper(
     config,
-    firecrawl_url="http://localhost:3002",
     llm_url="http://localhost:8000/v1",  # 或設定環境變數 LLM_URL
     model_name="Qwen/Qwen3-4B-Instruct-2507",
     debug=True  # 啟用調試模式，儲存中間檔案

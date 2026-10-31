@@ -29,12 +29,10 @@ def test_summarize_article_llm_failure_returns_empty():
     assert ac.summarize_article("一篇夠長的文章內文" * 20, llm=fake_llm) == ""
 
 
-def test_fetch_article_content_uses_firecrawl(monkeypatch):
+def test_fetch_article_content_reads_site_selector(monkeypatch):
     long_para = "這是一段足夠長的新聞正文內容用於通過內容有效性檢查的中文段落需要超過八十字元喔喔喔喔喔喔喔喔喔。" * 3
-    body = long_para + "\n" + long_para
-    resp = mock.Mock()
-    resp.json.return_value = {"data": {"markdown": body}}
-    resp.raise_for_status.return_value = None
-    monkeypatch.setattr(ac.requests, "post", mock.Mock(return_value=resp))
-    out = ac.fetch_article_content("https://www.ltn.com.tw/news/1", firecrawl_url="http://fc:3002")
+    html = f'<div class="text"><p>{long_para}</p><p>{long_para}</p></div>'.encode()
+    resp = mock.Mock(content=html)
+    monkeypatch.setattr(ac.requests, "get", mock.Mock(return_value=resp))
+    out = ac.fetch_article_content("https://www.ltn.com.tw/news/1")
     assert out and "新聞正文" in out
