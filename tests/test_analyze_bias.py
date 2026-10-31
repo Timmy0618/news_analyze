@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scripts.analyze_bias import (
+    _merge_same_topics,
     _classify_bias,
     _determine_topic_sides,
     _extract_json,
@@ -429,3 +430,42 @@ class TestRunBiasAnalysis:
         assert verdicts.count("neutral") == 2
         mock_db.commit.assert_called()
 
+
+# ---------------------------------------------------------------------------
+# _merge_same_topics
+# ---------------------------------------------------------------------------
+
+class TestMergeSameTopics:
+    def _topics(self):
+        return [
+            ({"topic": "台北辯論"}, [{"id": "1", "title": "a"}, {"id": "2", "title": "b"}]),
+            ({"topic": "高雄辯論"}, [{"id": "3", "title": "c"}]),
+            ({"topic": "台北攻防"}, [{"id": "2", "title": "b"}, {"id": "4", "title": "d"}]),
+        ]
+
+    def test_merges_group_and_keeps_rest(self):
+        llm = MagicMock()
+        llm.invoke.return_value = MagicMock(content='{"groups": [[0, 2]]}')
+        out = _merge_same_topics(llm, self._topics())
+        assert [s["topic"] for s, _ in out] == ["台北辯論", "高雄辯論"]
+        assert [a["id"] for a in out[0][1]] == ["1", "2", "4"]  # 重複的 id 2 只留一次
+
+    def test_bad_llm_output_keeps_original(self):
+        llm = MagicMock()
+        llm.invoke.return_value = MagicMock(content="無法判斷")
+        topics = self._topics()
+        assert _merge_same_topics(llm, topics) == topics
+
+    def test_ignores_out_of_range_and_repeated_indices(self):
+        llm = MagicMock()
+        llm.invoke.return_value = MagicMock(content='{"groups": [[0, 9], [0, 1]]}')
+        out = _merge_same_topics(llm, self._topics())
+        assert [s["topic"] for s, _ in out] == ["台北辯論", "高雄辯論", "台北攻防"]
+
+    def test_drops_groups_containing_existing_topic(self):
+        llm = MagicMock()
+        # 0,1,2 是新群，3 是今天已存的「台北市長辯論」
+        llm.invoke.return_value = MagicMock(content='{"groups": [[0, 2, 3]]}')
+        out = _merge_same_topics(llm, self._topics(), [{"topic": "台北市長辯論"}])
+        assert [s["topic"] for s, _ in out] == ["高雄辯論"]
+        assert "3. 台北市長辯論" in llm.invoke.call_args[0][0][0].content

@@ -4,7 +4,8 @@
 流程：
 1. 呼叫 Supabase graph Edge Function 取得文章分群
 2. 每個 cluster：LLM 判斷主題 + 兩個對立立場
-3. 每篇文章：Firecrawl 抓全文 → LLM 判斷立場（中立/偏A方/偏B方）
+2.5 LLM 把同一事件被拆開的群併回去
+3. 每篇文章：requests 抓全文 → LLM 判斷立場（中立/偏A方/偏B方）
 4. 結果寫入 topic_clusters + article_bias
 """
 
@@ -25,7 +26,7 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 
 from database.config import Session
-from database.models import ArticleBias, TopicCluster
+from database.models import ArticleBias, NewsArticle, TopicCluster
 from utils.article_content import fetch_article_content
 from utils.llm import create_llm
 from utils.logger import get_logger
@@ -101,6 +102,67 @@ def _determine_topic_sides(llm, titles: list[str]) -> dict:
     return _extract_json(resp.content.strip())
 
 
+def _merge_same_topics(
+    llm, topics: list[tuple[dict, list]], existing: list[dict] = (),
+) -> list[tuple[dict, list]]:
+    """一次問 LLM 哪些群是同一事件、同一組對立方，併成一群（沿用組內第一群的主題/立場）。
+
+    中心向量做不到：Qwen3-0.6B 標題向量裡，無關的「同志遊行」vs「賄選案」(0.83) 比
+    同一場「台北市長辯論」的兩群 (0.80) 還像。LLM 回壞了就原樣返回。
+
+    existing 是當天已存的主題，跟新群一起編號分組；含已存主題的組整組丟掉。同一天重跑時
+    新文章會讓 k-means 分出不同的群，文章重疊 < 50% 的去重攔不住（10/31 同志遊行存了兩次）。
+    分開問「跟已存的重不重複」本地 LLM 會漏判，所以只問分組這一件事。
+    """
+    if not topics or len(topics) + len(existing) < 2:
+        return topics
+    n = len(topics)
+    lines = [
+        f"{i}. {s.get('topic', '')}（{s.get('side_a') or '-'} vs {s.get('side_b') or '-'}）"
+        f"例：{'、'.join(a['title'][:30] for a in arts[:3])}"
+        for i, (s, arts) in enumerate(topics)
+    ] + [
+        f"{n + j}. {s.get('topic', '')}（{s.get('side_a') or '-'} vs {s.get('side_b') or '-'}）"
+        for j, s in enumerate(existing)
+    ]
+    prompt = f"""以下是新聞分群的主題與對立立場：
+{chr(10).join(lines)}
+
+找出「同一個新聞事件」的群，例如同一場選舉的辯論與攻防、同一個案件的後續。
+只是同類型不算：不同城市的選舉、不同的案子、不同的法案，都要分開。
+只輸出JSON，列出要合併的群編號，每組至少 2 個；沒有就回空陣列：{{"groups": [[0, 3]]}}"""
+    try:
+        groups = _extract_json(llm.invoke([HumanMessage(content=prompt)]).content).get("groups", [])
+    except Exception as e:
+        logger.warning(f"合併同主題失敗，維持原分群: {e}")
+        return topics
+
+    used: set[int] = set()
+    merged = []
+    for g in groups + [[i] for i in range(n)]:  # 沒被分組的各自成群
+        g = {i for i in g if isinstance(i, int) and 0 <= i < n + len(existing)}
+        idx = sorted({i for i in g if i < n} - used)
+        if not idx:
+            continue
+        used.update(idx)
+        names = " + ".join(topics[i][0].get("topic", "") for i in idx)
+        if any(i >= n for i in g):
+            logger.info(f"Skip 今天已有同主題: {names}")
+            continue
+        sides, articles = topics[idx[0]]
+        articles = list(articles)
+        seen = {a.get("id") for a in articles}
+        for i in idx[1:]:
+            for a in topics[i][1]:
+                if a.get("id") not in seen:
+                    seen.add(a.get("id"))
+                    articles.append(a)
+        if len(idx) > 1:
+            logger.info(f"合併同主題: {names}")
+        merged.append((sides, articles))
+    return merged
+
+
 _LLM_STANCE_PROMPT = """你是新聞媒體識讀分析員。判斷這篇報導在「{topic}」上的立場。
 立場A：{side_a}
 立場B：{side_b}
@@ -119,7 +181,7 @@ _LLM_STANCE_PROMPT = """你是新聞媒體識讀分析員。判斷這篇報導�
 
 
 def _strip_markdown(md: str) -> str:
-    """Firecrawl markdown 前段大多是導覽/分享鈕/圖片連結，原本前 3000 字只有約 600 字是內文。
+    """去掉殘留的 markdown 導覽/圖片連結（舊 Firecrawl 時代留下的，正文改純文字後多半是 no-op）。
 
     去掉圖片、連結只留文字，只保留中文字 >= 20 的行（內文段落）。
     """
@@ -207,20 +269,25 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
     existing_id_sets = _existing_cluster_article_ids(db, today)
 
     try:
-        for cluster in clusters:
+        # Step 1: 每群判斷主題與兩個立場（大群優先，跟關聯圖譜同排序；重疊去重時熱門主題先佔位）
+        topics = []
+        for cluster in sorted(clusters, key=lambda c: -c.get("article_count", 0)):
             articles = cluster.get("articles", [])
             if len(articles) < 2:
                 continue
-
-            titles = [a["title"] for a in articles]
-
-            # Step 1: 判斷主題與兩個立場
             try:
-                sides = _determine_topic_sides(llm, titles)
+                topics.append((_determine_topic_sides(llm, [a["title"] for a in articles]), articles))
             except Exception as e:
                 logger.warning(f"無法判斷 cluster 主題: {e}")
-                continue
 
+        # Step 1.5: k-means 會把同一事件拆成好幾群（台北市長辯論拆成 3 群），交給 LLM 併回去
+        existing = [
+            {"topic": c.cluster_label, "side_a": c.side_a, "side_b": c.side_b}
+            for c in db.query(TopicCluster).filter_by(run_date=today)
+        ]
+        topics = _merge_same_topics(llm, topics, existing)
+
+        for sides, articles in topics:
             topic = sides.get("topic", "未知主題")
             side_a = sides.get("side_a") or "立場A"
             side_b = sides.get("side_b") or "立場B"
@@ -275,6 +342,9 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
             # Step 2: 爭議主題逐篇判斷立場
             bias_count = 0
             fetch_failed = 0
+            # ponytail: 全文抓不到就退回 DB 的大綱。抓取掛掉時（10/24 Firecrawl 那次）爭議群全被刪光，只剩資訊型主題。
+            summaries = dict(db.query(NewsArticle.id, NewsArticle.summary).filter(
+                NewsArticle.id.in_([int(a["id"]) for a in valid_articles])).all())
             for art in valid_articles:
                 art_id = int(art["id"])
                 art_url = art["url"]
@@ -283,7 +353,7 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
                 if db.query(ArticleBias).filter_by(cluster_id=tc.id, article_id=art_id).first():
                     continue
 
-                content = fetch_article_content(art_url)
+                content = fetch_article_content(art_url) or summaries.get(art_id)
                 if not content:
                     fetch_failed += 1
                     logger.info(f"  Skip（無法抓取）: {art_url}")
@@ -311,7 +381,7 @@ def run_bias_analysis(days_back: int = 3, k: int = 10, min_similarity: float = 0
             if bias_count == 0:
                 db.delete(tc)
                 db.flush()
-                logger.info(f"Cluster '{topic}' 無文章成功分析，跳過（抓取失敗 {fetch_failed} 篇）")
+                logger.warning(f"Cluster '{topic}' 無文章成功分析，跳過（抓取失敗 {fetch_failed} 篇，站台版型變了？檢查 SITE_TAGS）")
                 continue
 
             tc.article_count = bias_count

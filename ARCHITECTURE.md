@@ -190,8 +190,9 @@ embeds the query and calls `match_articles` (cosine `<=>`) → ranked results.
 
 **Bias pipeline (daily)**
 `run_bias_analysis` → `graph` Edge Function clusters recent articles by
-`title_embedding` → for each controversial cluster, fetch article bodies (`requests`)
-and classify stance (LLM) → write `topic_clusters` + `article_bias` → `BiasPage`
+`title_embedding` → LLM names each cluster's topic/sides and merges clusters that
+are the same event → for each controversial cluster, fetch article bodies
+(`requests`) and classify stance (LLM) → write `topic_clusters` + `article_bias` → `BiasPage`
 reads them via the `bias` Edge Function + `get_bias_stats`.
 
 **Graph view**
